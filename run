@@ -1,0 +1,10 @@
+#!/bin/sh
+
+rm kiwi.img
+fasm kiwi.asm kiwi.img
+
+if [ -e kiwi.img ]; then
+  cp kiwi.img ../a -f
+  wine "C:\\Program Files\Bochs\bochs.exe" -f kiwi.bxrc -q
+fi
+	
