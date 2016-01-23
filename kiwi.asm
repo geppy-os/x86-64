@@ -1,8 +1,7 @@
 
-;---------------------------------------------------------------------------------------------------
 ; Distributed under GPL v1 License
 ; All Rights Reserved.
-;---------------------------------------------------------------------------------------------------
+
 
 	format binary as 'img'
 	org 0x8000
@@ -57,8 +56,6 @@ _pmode_ends:
 
 ; identity mapped (most used once and forgotten)
 
-ioapic_gin	= 0x70000	; 4bytes vars; array index = ioapic index; value = ACPI GlobIntNumber
-				;				  if value = -1, ioapic doesn't exist
 acpiLapicIDs	= 0x7e000	; 1KB = 256 CPUs * 4 bytes;  index = 4byte acpiID; value = lapicID
 bootCpuInfo	= 0x7f000	; 4KB = 256 CPUs * 16 bytes; index = lapicID
 
@@ -78,29 +75,38 @@ pcie	= 0x30000000	; at 768MB, 256MB in size
 gdt		= data1
 gdtr		= data1 + 64
 time		= data1 + 80
+largestLapicID	= data1 + 96
 
 kCpuId2lapic	= data1 + 1024	; Map kernel CPU id to LapicID; Array index = kCpuId
 				; 4bytes entries(contains LapicID) * 256 CPUs = 1KB
 isaDevs 	= data1 + 2048
-pciDevs 	= data1 + 2368
+ioapic_gin	= data1 + 2368	; 4bytes vars; array index = ioapic index; value = ACPI GlobIntNumber
+				;				  if value = -1, ioapic doesn't exist
+ioapic_inputCnt = data1 + 2384	; 4bytes = 1byte (for each ioapic) * 4
+				; if 0 - corresponding ioapic doesn't exist (after 'parse_MADT runs')
+
+pciDevs 	= data1 + 2388
 _?		= data1 + 6464
 
 ; 20byte device entry (for PCI & ISA busses)
 ;-----------------------------------
-; ISA PNP   or	  8byte dev+vendor id
+; +0   ISA PNP	 or    8byte dev+vendor id    (temporarily = 4byte acpi GlobIntNumber)
 ;
-; 3byte class code (pci)
-; iopaic input 1byte
+; +8   3byte class code (pci)
 ;
-; 1byte:
-;   iopaic id 4bits
-;   polarity / trigger 2bits
-;   entry present(1) or not(0) bit
-;   bit=1 if PCI, =0 if ISA
+; +11  ioapic input 1byte
 ;
-; 3byte offset to additional info in 8byte units
+; +12  1byte:
+;	  iopaic id 4bits	 [3:0]
+;	  trigger bit		 [4]
+;	  polarity trigger	 [5]
+;	  undefined bit 	 [6]
+;	  bit=1 if entry valid	 [7]
 ;
-; 4byte pci bus/dev/func
+; +13	3byte offset to additional info in 8byte units
+;
+; +16	4byte pci bus/dev/func
+
 
 ;==================================================================== per CPU private data =========
 
@@ -146,15 +152,45 @@ kStack		equ	r15+(128*1024)	; 64KB
 
 ; get another bochs.exe that supports several local CPUs
 
+;set error/sucess bit and display then as a hex number to indicate boot progress
+
+;LAPIC ignores the trigger mode unless programmed as 'fixed'
+
+;For all normal interrupts and IPIs
+;(but not for NMI, SMI, INIT or spurious interrupts) you need to send an EOI to the local APIC
+
+; MA: PRICE: if no "significant" changes in price then simply ignore the previous bars
+; separate bar in parts when direction is about to change
+
+;----------------------------------------------------
+;IOAPIC: 0=High active, 1=Low active.
+;	 1=Level sensitive, 0=Edge sensitive
 ;----------------------------------------------------
 ; if
 ;     Conforms to the specifications of the bus
 ; then
 ;     edge triggered active high for ISA, level triggered active low for PCI,
 ;----------------------------------------------------
+; ACPI
+;Polarity
+; 00 Conforms to specifications of the bus
+;>01 Active high (ISA)
+; 10 Reserved
+; 11 Active low (PCI)
+;
+; ACPI
+;Trigger Mode 2 2 Trigger mode of the APIC I/O Input signals:
+; 00 Conforms to specifications of the bus
+;>01 Edge-triggered (ISA)
+; 10 Reserved
+; 11 Level-triggered (PCI)
 
+; need to force invlpg on all cpus that share same 4kb for mapping
+; but can only do mandatory right-away invlpg when unmapping pages
 
 ;===================================================================================================
+
+	include 'debug.asm'
 
 	include 'kernel64.asm'
 

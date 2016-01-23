@@ -1,8 +1,7 @@
 
-;---------------------------------------------------------------------------------------------------
 ; Distributed under GPL v1 License
 ; All Rights Reserved.
-;---------------------------------------------------------------------------------------------------
+
 
 	org 0x29'9991'7000
 	;org 0x200000
@@ -103,21 +102,55 @@ LMode:
 	mov	eax, 48
 	ltr	ax				; load TSS
 
-	mov	rax, cr0
-	sti
+;	 mov	 rax, cr0
+;	 sti
 ;===================================================================================================
 
+	call	acpi_parse_MADT 		; + setup IOAPICs & ISA->IOAPIC redirection
 
 
-	call	acpi_parse_MADT
+	; get lapic address
+	mov	ecx, LAPIC_MSR
+	rdmsr
+	mov	ecx, edx
+	bt	eax, 8
+	jnc	k64err
+	and	eax, not 4095
+	shl	rcx, 32
+	or	rax, rcx
+
+	; map lapic
+	mov	rcx, 0xffff'fff0'0000'0000
+	mov	rdi, lapic shr 12
+	or	rax, 10011b
+	or	rcx, rdi
+	shl	rdi, 12
+	mov	[rcx*8], rax
+	invlpg	[rdi]
 
 
-	mov	dword [qword ioapic], 1
-	mov	eax, [qword ioapic + 0x10]
-	reg	rax, 81f
+	mov	eax, [qword lapic + LAPIC_VER]
+
+
+	reg	rax, 80e
+
+
+
+
+	call	init_RTC			; includes STI = enable interrupts
+
+
+
+
+
+
+
+
+	; add human-readable errors
+
 
 	mov	rax, [qword ioapic_gin]
-	reg	rax, 101f
+	reg	rax, 102f
 
 	jmp	$
 
@@ -176,5 +209,3 @@ _idt_exceptions_lmode:
 	dw	int_dummy1-int_handlers, int_MF-int_handlers, int_AC-int_handlers
 	dw	int_MC-int_handlers, int_XM-int_handlers, int_VE-int_handlers
   .cnt = ($-_idt_exceptions_lmode)/2
-
-LMode_ends = $

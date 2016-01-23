@@ -30,7 +30,7 @@ PMode:
 	add	esi, 16
 	cmp	dword [esi], 'RSD '
 	jz	.found_RSDT
-	cmp	esi, ebp
+@@:	cmp	esi, ebp
 	jb	.find_RSDP
 
 	cmp	esi, 0xE0000
@@ -60,8 +60,10 @@ PMode:
 	mov	edx, [edi + 4]		; rsdt length
 	mov	ecx, edi
 	mov	ebx, edx
+	test	edi, edi
+	jz	.find_RSDP
 	cmp	edx, 40
-	jb	.find_RSDP
+	jl	.find_RSDP
 
 	; RSDT checksum
 	xor	eax, eax
@@ -123,8 +125,8 @@ PMode:
 
 	test	ebx, ebx
 	jz	.MP_found
-	cmp	dword [ebx], 'PCMP'
 	movzx	ecx, word [ebx + 4]
+	cmp	dword [ebx], 'PCMP'
 	jnz	.MP_found
 	cmp	ecx, 64
 	jb	.MP_found
@@ -368,6 +370,7 @@ macro ___debug_showMem2{
 
 	cmp	byte [esi + 15], 0	; unrealistic large size (needs more calculations)
 	jnz	.range_invalid
+
 	cmp	dword [esi + 12], 0	; range is invalid if size < 128KB (needs more calculations)
 	jnz	@f
 	cmp	dword [esi + 8], 128*1024
