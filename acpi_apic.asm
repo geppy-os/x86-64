@@ -11,6 +11,8 @@
 
 acpi_parse_MADT:
 
+	; maybe keep this isa data structure on a stack for the duration of this function
+
 	; setup default ISA -> IOAPIC mapping (will be overwritten by parsing MADT)
 	mov	rsi, isaDevs
 	xor	eax, eax

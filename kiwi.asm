@@ -76,6 +76,7 @@ gdt		= data1
 gdtr		= data1 + 64
 time		= data1 + 80
 largestLapicID	= data1 + 96
+timeTicks	= data1 + 112
 
 kCpuId2lapic	= data1 + 1024	; Map kernel CPU id to LapicID; Array index = kCpuId
 				; 4bytes entries(contains LapicID) * 256 CPUs = 1KB
@@ -85,7 +86,8 @@ ioapic_gin	= data1 + 2368	; 4bytes vars; array index = ioapic index; value = ACP
 ioapic_inputCnt = data1 + 2384	; 4bytes = 1byte (for each ioapic) * 4
 				; if 0 - corresponding ioapic doesn't exist (after 'parse_MADT runs')
 
-pciDevs 	= data1 + 2388
+
+;pciDevs	 = data1 + 2388
 _?		= data1 + 6464
 
 ; 20byte device entry (for PCI & ISA busses)
@@ -111,7 +113,10 @@ _?		= data1 + 6464
 ;==================================================================== per CPU private data =========
 
 idt		equ	r15
+
 lapicT_stack	equ	r15+(4096+256)
+; +0 RTC attached to CPU id, 1byte
+
 PF_stack	equ	r15+(4096+512)
 GP_stack	equ	r15+(4096+768)
 DF_stack	equ	r15+(4096+1024)
@@ -197,9 +202,15 @@ kStack		equ	r15+(128*1024)	; 64KB
 	include 'acpi_apic.asm'
 	include 'int_handlers.asm'
 	include 'rtc_cmos.asm'
-	include 'bigDump/numbers.asm'
 	include 'lapic_timer.asm'
 	include 'memory.asm'
+	include 'devices_ints.asm'
+
+	include 'bigDump/numbers.asm'
+
+LMode_data:
+
+	include 'plug_and_play.inc'
 
 _lmode_ends:
 

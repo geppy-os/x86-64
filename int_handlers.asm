@@ -177,3 +177,7 @@ int_dummy2:
 	jmp $
 
 	iretq
+
+  align 8
+int_lapicSpurious:
+	iretq

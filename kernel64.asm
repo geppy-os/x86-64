@@ -91,7 +91,7 @@ LMode:
 	cmp	ebx, _idt_exceptions_lmode.cnt*16
 	jb	.fill_IDT
 
-	mov	byte [rdi + 14*16 + 4], 2	; #PF	for IST stack
+	mov	byte [rdi + 14*16 + 4], 2	; #PF	IST stack
 	mov	byte [rdi + 13*16 + 4], 3	; #GP
 	mov	byte [rdi +  8*16 + 4], 4	; #DF
 
@@ -107,7 +107,6 @@ LMode:
 ;===================================================================================================
 
 	call	acpi_parse_MADT 		; + setup IOAPICs & ISA->IOAPIC redirection
-
 
 	; get lapic address
 	mov	ecx, LAPIC_MSR
@@ -128,29 +127,47 @@ LMode:
 	mov	[rcx*8], rax
 	invlpg	[rdi]
 
+	mov	r8d, 0x2f
+	lea	r9, [int_lapicSpurious]
+	call	idt_setIrq
 
-	mov	eax, [qword lapic + LAPIC_VER]
+	mov	r8d, 0x1f0
+	lea	r9, [int_lapicTimer]
+	call	idt_setIrq
+
+	mov	eax, [qword lapic + LAPIC_SVR]
+	and	eax, not 0xff
+	or	eax, 0x10f			; lapic enable + idt entry 15 for spurious interrupt
+	mov	[qword lapic + LAPIC_SVR], eax
+	mov	dword [qword lapic + LAPIC_DFR], 0xf000'0000	; flat model
+	mov	dword [qword lapic + LAPICT_DIV], 1		; divide by 4 for LapicTimer
+	mov	dword [qword lapic + LAPICT], 0x2'00f0
+
+	sti
+	xor	eax, eax
+	mov	cr8, rax
+
+	; init RTC and measure LapicTimer speed
+	mov	r8d, 0x11'f1
+	mov	r9, 'PNP0B00' ; find this ID in ACPI, load driver that provides int handler
+	call	dev_install
 
 
-	reg	rax, 80e
+
+	call	fragmentRAM
 
 
 
-
-	call	init_RTC			; includes STI = enable interrupts
-
-
-
-
-
-
+	; - scan pci bus, get BAR ranges (with some/all bridges skipped - we are using RTC),
+	;   determine mimo access
+	; - write time delay/alert functions (which could be linked to threads - problem)
+	; - write ps2 kbd and mouse with static buffers
+	; - graphical user interface with static buffers
+	; - implement mem mngr
 
 
-	; add human-readable errors
 
-
-	mov	rax, [qword ioapic_gin]
-	reg	rax, 102f
+	mov	dword [qword lapic + LAPICT_INIT], 0x20000
 
 	jmp	$
 

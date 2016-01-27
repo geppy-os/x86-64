@@ -9,9 +9,11 @@ define LAPIC_EOI	0x00b0
 define LAPIC_RRD	0x00c0
 define LAPIC_LDR	0x00d0
 define LAPIC_DFR	0x00e0
+define LAPIC_SVR	0x00f0
 define LAPICT		0x0320
 define LAPICT_INIT	0x0380
 define LAPICT_CURRENT	0x0390
+define LAPICT_DIV	0x03e0
 define LAPIC_MSR	0x1b		; IA32_APIC_BASE
 
 

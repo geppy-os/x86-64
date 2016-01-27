@@ -1,4 +1,8 @@
 
+; Distributed under GPL v1 License
+; All Rights Reserved.
+
+
 bios_boot:
 	cli
 	jmp	0:@f
@@ -419,21 +423,20 @@ bios_boot:
 
 	; measure TSC granularity
 	xor	si, si
-	mov	bp, 16
-	rdtsc
-@@:	and	eax, 7
-	cpuid
-	rdtsc
-	mov	[gs:tscBits + si], al
-	inc	si
-	dec	bp
-	jnz	@b
+	mov	bp, 8
+	call	.tsc_calibration
 
 	; disable PIC ints
 	cli
 	mov	al, 255
 	out	0xa1, al
 	out	0x21, al
+	sti
+
+	; wait again for pending ints to go thru
+	mov	si, 8
+	mov	bp, 8
+	call	.tsc_calibration
 
 	; switch to Protected mode
 	pushd	0 0 0
@@ -446,6 +449,17 @@ bios_boot:
 	jmp	8:PMode
 
 
+;===================================================================================================
+.tsc_calibration:
+	rdtsc
+@@:	and	eax, 7
+	cpuid
+	rdtsc
+	mov	[gs:tscBits + si], al
+	inc	si
+	dec	bp
+	jnz	@b
+	ret
 
 ;===================================================================================================
 .toAsciiDec:
