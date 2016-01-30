@@ -262,13 +262,13 @@ acpi_parse_MADT:
 	sub	ebp, 1
 	jnz	.IRQ_fix
 
-	; PIC spurious irq can't be connected to anything
+	; PIC spurious IRQs can't be connected to anything
 	mov	esi, isaDevs
 	xor	eax, eax
-	mov	[rsi + 2*20], eax
-	mov	[rsi + 2*20 + 12], eax
-	;mov	 [rsi + 7*20], eax	; 2nd ?
-	;mov	 [rsi + 7*20 + 12], eax
+	mov	[rsi + 7*20], eax
+	mov	[rsi + 7*20 + 12], eax
+	mov	[rsi + 15*20], eax
+	mov	[rsi + 15*20 + 12], eax
 
 .exit:
 	ret

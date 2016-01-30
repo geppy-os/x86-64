@@ -574,6 +574,9 @@ macro ___debug_showMem2{
 .alloc16_done:
 	;___debug_showMem2
 
+	movzx	eax, byte [memMap_cnt + rmData]
+	mov	[memMap_cnt2 + rmData], eax
+
 ;===================================================================================================
 
 	; copy 64bit kernel
@@ -596,15 +599,15 @@ macro ___debug_showMem2{
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
-reg esi, 82f
+;reg esi, 82f
 	mov	cr3, esi			; pml4
 	movd	ebx, xmm7			; 2mb in 16kb units
 	lea	eax, [esi + 4096   + 7] 	; Present, R/W, User
 	lea	ecx, [esi + 4096*2 + 3]
 	lea	edi, [esi + 4096*3 + 3]
-reg eax, 82f
-reg ecx, 82f
-reg edi, 82f
+;reg eax, 82f
+;reg ecx, 82f
+;reg edi, 82f
 	shl	ebx, 14
 	or	ebx, 0x81			; PageSize=1, Present
 	mov	[esi], eax			; PML4		-> PDP-0 (512GB)
@@ -616,7 +619,7 @@ reg edi, 82f
 	or	esi, 3
 	mov	[esi + 511*8-3], esi		; last PML4 entry to the same PML4 table
 
-	; identity map 1st lowest 512KB (from 0x00000 to 0x07ffff)
+	; identity map 1st lowest 512KB (from 0x00000 to 0x7ffff)
 	push	ecx edi
 	mov	eax, 3
 	mov	ecx, 128

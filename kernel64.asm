@@ -95,15 +95,19 @@ LMode:
 	mov	byte [rdi + 13*16 + 4], 3	; #GP
 	mov	byte [rdi +  8*16 + 4], 4	; #DF
 
+	; set PF stack
+	mov	rax, 0x0004'0004'ff'ff
+	mov	[PF_pages], rax
+	mov	[PF_r15], r15
+
+	; load IDT & TSS
 	lea	rsi, [idtr]
 	mov	word [rsi], 4095
 	mov	[rsi+2], rdi
-	lidt	[rsi]				; load IDT
+	lidt	[rsi]
 	mov	eax, 48
-	ltr	ax				; load TSS
+	ltr	ax
 
-;	 mov	 rax, cr0
-;	 sti
 ;===================================================================================================
 
 	call	acpi_parse_MADT 		; + setup IOAPICs & ISA->IOAPIC redirection
@@ -137,7 +141,7 @@ LMode:
 
 	mov	eax, [qword lapic + LAPIC_SVR]
 	and	eax, not 0xff
-	or	eax, 0x10f			; lapic enable + idt entry 15 for spurious interrupt
+	or	eax, 0x12f			; lapic enable + idt entry 47 for spurious interrupt
 	mov	[qword lapic + LAPIC_SVR], eax
 	mov	dword [qword lapic + LAPIC_DFR], 0xf000'0000	; flat model
 	mov	dword [qword lapic + LAPICT_DIV], 1		; divide by 4 for LapicTimer
@@ -153,13 +157,23 @@ LMode:
 	call	dev_install
 
 
-
 	call	fragmentRAM
+@@:	call	fragmentRAM
+	jc	k64err				; not enough memory
+	cmp	dword [qword memTotal], 0x1000	; need min 64MB
+	jb	@b
+@@:
+	call	update_PF_ram
+	cmp	word [PF_pages + 6], 0x400	; min 16MB for #PF, one call gets us max 15.9MB
+	jb	@b
+
+	call	pci_scanTheBus			; TODO: dynamically alloc mem for PCI info
 
 
 
 	; - scan pci bus, get BAR ranges (with some/all bridges skipped - we are using RTC),
 	;   determine mimo access
+	; - boot other CPUs maybe (must have enough RAM)
 	; - write time delay/alert functions (which could be linked to threads - problem)
 	; - write ps2 kbd and mouse with static buffers
 	; - graphical user interface with static buffers
@@ -167,8 +181,13 @@ LMode:
 
 
 
+
+
+
+
 	mov	dword [qword lapic + LAPICT_INIT], 0x20000
 
+       ; ;mov	  rax, [qword 0xf378782]
 	jmp	$
 
 
@@ -214,15 +233,3 @@ reg64:
 	ret 16
 
 	align 4
-.cursor dd 0	; in bytes, 2bytes per symbol in text mode
-
-;===================================================================================================
-_idt_exceptions_lmode:
-	dw	int_DE-int_handlers, int_DB-int_handlers, int_NMI-int_handlers
-	dw	int_BP-int_handlers, int_OF-int_handlers, int_BR-int_handlers
-	dw	int_UD-int_handlers, int_NM-int_handlers, int_DF-int_handlers
-	dw	int_dummy2-int_handlers, int_TS-int_handlers, int_NP-int_handlers
-	dw	int_SS-int_handlers, int_GP-int_handlers, int_PF-int_handlers
-	dw	int_dummy1-int_handlers, int_MF-int_handlers, int_AC-int_handlers
-	dw	int_MC-int_handlers, int_XM-int_handlers, int_VE-int_handlers
-  .cnt = ($-_idt_exceptions_lmode)/2

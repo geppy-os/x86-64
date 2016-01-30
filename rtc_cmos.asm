@@ -38,7 +38,7 @@ rtc_int:
 rtc_init:
 	push	rax rcx
 
-	; driver need to tell OS if it is its interrupt arrived for share int handler
+	; driver needs to tell OS if it is its interrupt arrived for shared int handler
 
 	pushf
 	cli

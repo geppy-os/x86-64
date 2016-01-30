@@ -37,13 +37,19 @@ macro  sdf{
   align 8
 int_PF:
 	push	r8 r15 rax rcx rsi rdi rbx rbp
+	sub	rsp, 16
 	mov	rcx, cr2
+	reg	rcx, 104f
+
+	mov	rax, [sp_PF_r15]
+	mov	rax, [sp_PF_pages]
+
 
 	mov	dword [qword 32], (0x4f shl 24) + (0x4f  shl 8) + '_' + ('P' shl 16)
 	mov	dword [qword 36], (0x4f shl 24) + (0x4f  shl 8) + 'F' + ('_' shl 16)
 	mov	esi, [qword reg32.cursor]
 	mov	dword [qword reg32.cursor], 42
-	mov	rax, rsp
+	lea	rax, [rsp+112]
 	reg	rax, 104f
 	reg	rcx, 104f
 	mov	[qword reg32.cursor], esi
@@ -85,6 +91,13 @@ jmp @b
 
 
 	iretq
+;SS
+;RSP
+;RFLAGS
+;CS
+;RIP
+;Error Code
+
 
 .noPML4e:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('M' shl 16)
