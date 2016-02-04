@@ -1,0 +1,127 @@
+
+; 012345678  0000 001 0010 0011 0100 0101 0110 0111 1000 1001
+
+; abcdef     1010 1011 1100 1101 1110 1111
+
+
+mov edx, dNumber
+
+mov ecx, edx
+shr edx, 4
+and edx, 0F0F0F0Fh
+and ecx, 0F0F0F0Fh
+
+mov eax, edx
+mov edi, ecx
+add edx, 80808080h - 0A0A0A0Ah ; Build mask to discern digit > 9
+add ecx, 80808080h - 0A0A0A0Ah
+
+shr edx, 4
+shr ecx, 4
+not edx
+not ecx
+and edx, 07070707h ; Mask digit > 9 ... mask = 0111
+and ecx, 07070707h
+add edx, eax ; Add 'A' - '9' if digit > 9
+add ecx, edi
+add edx, 30303030h ; Add ascii '0'
+add ecx, 30303030h 
+
+
+mov	ecx, eax
+shr	eax, 4
+and	ecx, 0xf0f0f0f
+and	eax, 0xf0f0f0f
+mov	esi, ecx
+mov	edi, eax
+add	ecx, 0x76767676		; 0-9 result in <= 127
+add	eax, 0x76767676		;  a-f result in 128+
+shr	ecx, 7
+shr	eax, 7
+imul	ecx, 0x18 ;7
+imul	eax, 0x18
+lea	ecx, [ecx + esi + 0x30303030]
+lea	eax, [eax + edi + 0x30303030]
+movd	xmm0, ecx
+movd	xmm1, eax
+punpcklbw xmm0, xmm1
+
+
+
+;and	ecx, 0x   07  05  03  01
+;and	eax, 0x 08  06  04  02
+
+xchg	ch, al		
+
+;and	ecx, 0x   07  05  02  01
+;and	eax, 0x 08  06  04  03
+
+ror	ecx, 16
+
+;and	ecx, 0x   02  01  07  05  
+;and	eax, 0x 08  06  04  03
+
+ror	eax, 16
+
+;and	ecx, 0x   02  01  07  05  
+;and	eax, 0x 04  03  08  06  
+
+xchg	ch, al
+
+;and	ecx, 0x   02  01  06  05  
+;and	eax, 0x 04  03  08  07  
+
+movd	xmm0, ecx
+movd	xmm1, eax
+pshufw
+
+
+
+
+
+;and	ecx, 0x   07  05  03  01
+;and	eax, 0x 08  06  04  02
+
+xchg	ch, al		
+
+;and	ecx, 0x   07  05  02  01
+;and	eax, 0x 08  06  04  03
+
+ror	ecx, 16
+
+;and	ecx, 0x   02  01  07  05  
+;and	eax, 0x 08  06  04  03
+
+xchg	cx, ax
+
+;and	ecx, 0x   02  01  04  03
+;and	eax, 0x 08  06  07  05  
+
+rol	eax, 8
+
+;and	ecx, 0x   02  01  04  03
+;and	eax, 0x 06  07  05  08 
+
+ror	ax, 8
+
+;and	ecx, 0x   02  01 04  03
+;and	eax, 0x 06  07  08  05
+
+ror	ecx, 16
+bswap	eax
+
+;and	ecx, 0x   04  03  02  01 
+;and	eax, 0x 05  08  07  06
+
+ror	eax, 24
+
+;and	ecx, 0x   04  03  02  01 
+;and	eax, 0x 08  07  06  05  
+
+
+add	ecx, esi
+add	eax, edi
+add	ecx, 0x30303030
+add	eax, 0x30303030
+
+

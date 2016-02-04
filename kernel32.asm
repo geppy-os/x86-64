@@ -707,7 +707,10 @@ macro ___debug_showMem2{
 	mov	eax, cr0
 	or	eax, 1 shl 31
 	mov	cr0, eax		; enable paging
-	jmp	0x18:0x200000;LMode
+
+	jmp	0x18:0x200000
+
+	; execution continues to file "kernel64.asm" at "LMode" label
 
 
 ;===================================================================================================
