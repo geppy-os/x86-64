@@ -80,4 +80,3 @@ r8ToAsiiHex:
 
 ; hex editor: get max width of all:   00 01 .. fe ff
 ;	      divide max width in half - this will be separator (space betw bytes)
-;

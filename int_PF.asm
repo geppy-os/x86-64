@@ -3,6 +3,8 @@
 ; All Rights Reserved.
 
 
+; TODO: if addr belongs to paging hierachy (top bits are 1s 0xffff... ) then kernel panic
+
 	 align 8
 int_PF:
 	push	r8 r15 rax rcx rsi rdi rbx
@@ -31,7 +33,7 @@ int_PF:
 	mov	ebx, [sp_PF_pages + 4]
 	shl	r15, 16
 
-	; All paging tables up intil PT are always mapped
+	; All paging tables are always mapped
 	; They are never unmapped even if PT entries are not beeing used for a long time
 
 	ror	rbp, 39
@@ -54,7 +56,7 @@ int_PF:
 	jnz	.invalid_PDPe
 
 	or	rsi, rbp
-	mov	rdi, [rsi*8]			; get PT address from PDP entry
+	mov	rdi, [rsi*8]			; get PT address from PD entry
 	mov	rsi, 0xffff'fff0'0000'0000
 	rol	rbp, 9			   ; 3
 	xor	edi, 1
@@ -64,16 +66,18 @@ int_PF:
 	or	rsi, rbp			; RSI = PT entry (points to 4 KB)
 	shr	rsi, 2				;	align to a multiple of 4
 	shl	rsi, 2				;	we operate in 16KB chunks
-	test	dword [rsi*8], 1
+	mov	rdi, [rsi*8]
+	test	edi, 1
 	jnz	k64err
-
+	test	edi, PG_ALLOC
+	jz	.notAllocated
 
 	; check if we have valid page (1byte value) selected at "PF_pages+1"
 	mov	edi, ecx
 	cmp	ch, 8
 	jb	@f
 
-	; if no page selected then do so (happens rarely)
+	; if host page is not selected then do so (happens rarely)
 	not	rdi
 	bsf	rax, rdi
 	cmp	eax, 7
@@ -98,7 +102,7 @@ int_PF:
 	neg	rdi
 	lea	rax, [PF_ram + 4096 + rax]
 	mov	edi, [rax + rdi*4]		; EDI = 16kb index
-	reg	rdi, 69a
+	;reg	 rdi, 69a
 
 	ror	ebx, 16
 	sub	cx, 1				; cached page size --
@@ -121,7 +125,7 @@ int_PF:
 	mov	[rsi*8 + 24], rdi
 
 	shr	rbp, 2				; multiple of 4 entries
-	rol	rbp, 12+2
+	shl	rbp, 2 + 12			; low 12 bits is offset within 4KB page
 	invlpg	[rbp]
 	invlpg	[rbp + 4096]
 	invlpg	[rbp + 4096*2]
@@ -162,8 +166,16 @@ int_PF:
 .2nd_PF:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + '2' + ('n' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'd' + ('!' shl 16)
+	reg	rbp, 10cf
 	jmp	$
 
+; PG_ALLOC bit is not set
+.notAllocated:
+	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + '-' + ('A' shl 16)
+	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'L' + ('C' shl 16)
+	jmp	$
+
+; bitmask in "PF_pages" is empty (all 8 bits set)
 .noHostPagesMapped:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + '-' + ('H' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 's' + ('T' shl 16)
@@ -186,36 +198,4 @@ int_PF:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('D' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'e' + (' ' shl 16)
 	jmp	$
-
-
-
-
-macro  sdf{
-	mov	rcx, 0xfffffff'ff'ff'ff'000	; PML4 table (low 12 bits = 512 entries * 8bytes)
-	mov	rdx, 0xfffffff'ff'fe'00'000	; PDP #0 (mapped into PML4e #0)
-						; (low 12bits = 512 entries in PDP #0 * 8b)
-	mov	rbp, 0xfffffff'ff'fe'01'000	; PDP #1 (mapped into PML4e #1)
-	mov	rdi, 0xfffffff'fc'00'00'000	; PD #0 (mapped into PDP #0)
-	mov	r11, 0xffffff8'00'00'00'000	; PT #0 (mapped into PD #0)
-
-	mov	rax, [rcx]	; addr of PDP #0
-	mov	rbx, [rdx]	; addr of PD #0 (mapped into PDPe #0)
-	mov	rsi, [rdi]	; addr of PT #0 (mapped into PDe #0)
-	mov	r10, [rdi+8]	; addr of PT #1 (mapped into PDe #1)
-	mov	r12, [r11]
-	mov	r13, [r11+8]
-	mov	r14, [r11+16]
-
-	reg	rax, 101f
-	reg	rbx, 101f
-	reg	rsi, 101f
-	reg	r10, 101f
-	reg	r12, 104f
-	reg	r13, 104f
-	reg	r14, 104f
-
-	   pml4e     pdpe	pde	    pte
-       111111111 ' 111111111 ' 111111111 ' 111111111 '	12bits
-}
-
 

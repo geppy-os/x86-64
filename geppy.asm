@@ -99,14 +99,13 @@ ioapic_gin	= data1 + 2368	; 4bytes vars; array index = ioapic index; value = ACP
 				;				  if value = -1, ioapic doesn't exist
 ioapic_inputCnt = data1 + 2384	; 4bytes = 1byte (for each ioapic) * 4
 				; if 0 - corresponding ioapic doesn't exist (after 'parse_MADT runs')
-_?		= data1 + 2388
+
+lapicT_ticks	= data1 + 2388	; runs on one cpu at a time
+_?		= data1 + 2408
 
 memPtr		= locks + 128
 memTotal	= locks + 136
 memLock 	= locks + 140
-
-
-
 
 ; 20byte device entry (for PCI & ISA busses)
 ;-----------------------------------
@@ -126,8 +125,7 @@ memLock 	= locks + 140
 ; +13	3byte offset to additional info in 8byte units
 ;
 ; +16	4byte pci bus/dev/func
-
-
+;
 
 ;===================================================================================================
 ;			 per CPU private data
@@ -136,18 +134,28 @@ memLock 	= locks + 140
 
 idt		equ	r15
 
+;---------------------------------------------------------------------------------------------------
+
 lapicT_stack	equ	r15+(4096+256)
 
-; +0 RTC attached to CPU id, 1byte
+rtc_cpuID	equ	r15+((4096+256)-121)	; 1b, RTC attached to this CPU id
+rtc_job 	equ	r15+((4096+256)-122)	; 1b
+lapicT_r15	equ	r15+((4096+256)-128)	; 6bytes, value of R15 in 64KB units
+
+sp_rtc_cpuID	equ	rsp+7
+sp_rtc_job	equ	rsp+6
+sp_lapicT_r15	equ	rsp
 
 ;---------------------------------------------------------------------------------------------------
 PF_stack	equ	r15+(4096+512)
 
+PF_?_2		equ	r15+((4096+512)-122)	; 8bytes
 PF_pages	equ	r15+((4096+512)-120)	; 8bytes
 PF_2nd		equ	r15+((4096+512)-121)	; 1byte
 PF_?		equ	r15+((4096+512)-122)	; 1byte
 PF_r15		equ	r15+((4096+512)-128)	; 6bytes, value of R15 in 64KB units
 
+sp_PF_?_2	equ	rsp+16
 sp_PF_pages	equ	rsp+8
 sp_PF_2nd	equ	rsp+7
 sp_PF_? 	equ	rsp+6
@@ -172,21 +180,27 @@ sp_PF_r15	equ	rsp
 
 ;---------------------------------------------------------------------------------------------------
 
-GP_stack	equ	r15+(4096+768)
+GP_stack	equ	r15+(4*1024+768)
 
-DF_stack	equ	r15+(4096+1024)
+DF_stack	equ	r15+(4*1024+1024)
 
-HPET1_stack	equ	r15+(4096+1280)
+HPET1_stack	equ	r15+(4*1024+1280)
 
-interrupt_stack equ	r15+(4096+1408)
+interrupt_stack equ	r15+(4*1024+1408)
 
-paging_ram	equ	r15+(8*1024)
+paging_ram	equ	r15+(8*1024)		; 4KB
+
+tmpTimers	equ	r15+(12*1024)
+tmpEvents	equ	r15+(13*1024)
 
 ;------------------- 1.0KB for frequently used data ------- same 4KB as some other data ------------
 
 idtr		equ	r15+((15*1024)) 	; umm, never really used
 pgRam4_size	equ	r15+((15*1024)+12)
-_?		equ	r15+((15*1024)+16)
+lapicT_ms	equ	r15+((15*1024)+16)	; # number of lapic timer ticks per millisecond
+lapicT_ms_fract equ	r15+((15*1024)+20)	;			      for the divider of 2
+
+_?		equ	r15+((15*1024)+24)
 
 tss_data	equ	r15+(16*1024-2176)	; TSS is closer to threads, same 4KB (2176=2048+128)
 threads 	equ	r15+(16*1024-2048)	; 16KB, initial threads inside same 4KB as other data
@@ -209,57 +223,7 @@ pgRam4		equ	r15+(64*1024)		; 4KB
 
 kStack		equ	r15+(128*1024)	; 64KB
 
-
-
-;TODO: need to add checksum for the entire kernel (murmur)
-
-; per cpu data located at different physical RAM  (includes PML4) and mapped to a unique linear addr
-; to *completely* avoid TLB shootdown
-
-; when one CPU updates mapping it sets flag in predefined location
-; so that second CPU invalidates only when its ready
-
-; get another bochs.exe that supports several local CPUs
-
-;set error/sucess bit and display then as a hex number to indicate boot progress
-
-;LAPIC ignores the trigger mode unless programmed as 'fixed'
-
-;For all normal interrupts and IPIs
-;(but not for NMI, SMI, INIT or spurious interrupts) you need to send an EOI to the local APIC
-
-;----------------------------------------------------
-;IOAPIC: 0=High active, 1=Low active.
-;	 1=Level sensitive, 0=Edge sensitive
-;----------------------------------------------------
-; if
-;     Conforms to the specifications of the bus
-; then
-;     edge triggered active high for ISA, level triggered active low for PCI,
-;----------------------------------------------------
-; ACPI
-;Polarity
-; 00 Conforms to specifications of the bus
-;>01 Active high (ISA)
-; 10 Reserved
-; 11 Active low (PCI)
-;
-; ACPI
-;Trigger Mode 2 2 Trigger mode of the APIC I/O Input signals:
-; 00 Conforms to specifications of the bus
-;>01 Edge-triggered (ISA)
-; 10 Reserved
-; 11 Level-triggered (PCI)
-
-; need to force invlpg on all cpus that share same 4kb for mapping
-; but can only do mandatory right-away invlpg when unmapping pages
-
-; all free/alloc related to sys resources need to go into lowset priority thread
-
-; can offer 2 mem pools, one withing low 47 bits, 2nd above 0xfff0'0000'0000'0000
-
 ;===================================================================================================
-
 
 	include 'macros.inc'
 	include 'kernel64.asm'
@@ -326,7 +290,8 @@ mp_table	= vars + 444
 mp_table_len	= vars + 448
 
 memMap_cnt2	= vars + 986	; 4bytes
-tscBits 	= vars + 990	; 16bytes
+tscBits 	= vars + 990	; 16bytes, check individual bits in a byte and remember bits that never change
+
 ebda_mem	= vars + 1008
 vbeCap		= vars + 1012	; capabilities field
 vbeMem		= vars + 1016

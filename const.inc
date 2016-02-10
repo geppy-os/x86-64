@@ -15,6 +15,14 @@ define LAPICT_INIT	0x0380
 define LAPICT_CURRENT	0x0390
 define LAPICT_DIV	0x03e0
 define LAPIC_MSR	0x1b		; IA32_APIC_BASE
+define PG_PRESENT	1
+define PG_RW		2
+define PG_USER		4
+define PG_PS		(1 shl 7)
+define PG_G		(1 shl 8)
+define PG_ALLOC_USER	(1 shl 10)
+define PG_ALLOC 	(1 shl 11)
+define PG_XD		(1 shl 63)
 
 
 struct VBE

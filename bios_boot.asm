@@ -75,7 +75,7 @@ bios_boot:
 	jnz	.e820
 	cmp	ecx, 254
 	ja	.e820
-	mov	[di + 7], cl		; moving mem type
+	mov	[di + 7], cl		; change locaion of mem type
 
 	;mov	 ebp, [di + 4]
 	;reg	 ebp

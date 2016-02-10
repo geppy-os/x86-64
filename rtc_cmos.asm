@@ -7,30 +7,67 @@ init_ps2Mouse:
 
     align 8
 rtc_int:
-	pushf
-	push	rax rcx rsi rdi
+	push	r15 r8 rax rcx rsi rdi rdx
+	sub	rsp, 32
 
 	mov	eax, 0xc
 	out	0x70, al
 	in	al, 0x71
 
+	cmp	byte [sp_rtc_job], 0x7f
+	jz	.first_init			; 1st interrupt after initialization is ignored
+	ja	.lapicT_restart
+
 	add	byte [qword 8], 1
 
-;lea rax, [rsp-40]
-;reg rax, 101f
-;jmp $
-
+.exit:
 	mov	dword [qword lapic + LAPIC_EOI], 0
-	pop	rdi rsi rcx rax
-	popf
+	add	rsp, 32
+	pop	rdx rdi rsi rcx rax r8 r15
 	iretq
+
+.first_init:
+	add	byte [sp_rtc_job], 1
+	jmp	.exit
+
+
+;----------------------------------------------------------------------------------------------------=
+.get_time:
+
+;----------------------------------------------------------------------------------------------------=
+	; we measure lapic timer ticks 4 times,
+	; if too much inconsistency during these 4 times - we repeat
+
+	align 8
+.lapicT_restart:
+	mov	eax, [qword lapic + LAPICT_CURRENT]		; read current value
+	mov	dword [qword lapic + LAPICT_INIT], -1		; reinit counter
+	mov	ecx, 1
+	xadd	[sp_rtc_job], cl
+	and	ecx, 127
+	jz	.exit
+	cmp	ecx, 5				; did we have enough samples ?
+	ja	@f				; jump if so
+
+	; save values from [lapic + LAPICT_CURRENT] at [lapicT_ticks + offset]
+	mov	esi, lapicT_ticks
+	lea	rsi, [rsi + rcx*4 - 4]
+	mov	[rsi], eax
+	jmp	.exit
+@@:
+	; stop measurment of lapic timer speed
+
+	mov	byte [sp_rtc_job], 0
+
+	mov	r8d, 1111b			; interrupt happens twice a second
+	call	rtc_setRate
+	jmp	.exit
+
+
 
 ; Check number of times we received periodic interrupt - if update-ended was set (we need this flag).
 ; If no flag, then enable separate update-ended interrupt (which result in update-ended flag set)
 ;      to read date/time, which is only safe to read if no update-in-progress happening
-
-
-; pnp0b00
 
 ;===================================================================================================
 
@@ -38,7 +75,8 @@ rtc_int:
 rtc_init:
 	push	rax rcx
 
-	; driver needs to tell OS if it is its interrupt arrived for shared int handler
+	; driver needs to tell OS if interrupt that arrived belongs to this device
+	; (shared int handler)
 
 	pushf
 	cli
@@ -55,6 +93,9 @@ rtc_init:
 	out	0x70, al
 	mov	eax, ecx
 	out	0x71, al	; write to B
+
+	mov	byte [rtc_job], 0x7f
+	or	dword [qword lapic + LAPICT], 1 shl 16	; mask timer
 
 	mov	r8d, 0111b	; 512 times a second  (once per 1.953125 ms)
 	call	rtc_setRate

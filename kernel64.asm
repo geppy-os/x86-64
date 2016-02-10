@@ -95,7 +95,8 @@ LMode:
 	mov	byte [rdi + 13*16 + 4], 3	; #GP
 	mov	byte [rdi +  8*16 + 4], 4	; #DF
 
-	; set PF stack (don't change order how vars are saved)
+
+	; set PF stack (don't change the order how vars are saved)
 	lea	rax, [PF_r15]
 	mov	qword [PF_pages], 0xff'ff
 	shr	r15, 16
@@ -103,6 +104,16 @@ LMode:
 	shl	r15, 16
 	mov	byte [PF_2nd], 0x33
 	mov	byte [PF_?], 0
+
+
+	; set lapicTimer & RTC stack (don't change the order how vars are saved)
+	lea	rax, [lapicT_r15]
+	shr	r15, 16
+	mov	qword [rax], r15
+	shl	r15, 16
+	mov	byte [rtc_job], 0
+	mov	byte [rtc_cpuID], 0
+
 
 	; load IDT & TSS
 	lea	rsi, [idtr]
@@ -148,14 +159,12 @@ LMode:
 	or	eax, 0x14f			; lapic enable + idt entry for spurious interrupt
 	mov	[qword lapic + LAPIC_SVR], eax
 	mov	dword [qword lapic + LAPIC_DFR], 0xf000'0000	; flat model
-	mov	dword [qword lapic + LAPICT_DIV], 1		; divide by 4 for LapicTimer
+	mov	dword [qword lapic + LAPICT_DIV], 0		; divide by 2, once and forever
 	mov	dword [qword lapic + LAPICT], 0x2'0020
 
 	sti
 	xor	eax, eax
 	mov	cr8, rax
-
-mov	dword [qword lapic + LAPICT_INIT], 0x20000
 
 	; init RTC and measure LapicTimer speed
 	mov	r8d, 0x11'f1
@@ -166,61 +175,40 @@ mov	dword [qword lapic + LAPICT_INIT], 0x20000
 	call	fragmentRAM
 @@:	call	fragmentRAM
 	jc	k64err				; not enough memory
-	cmp	dword [qword memTotal], 0x1000	; need min 64MB
+	cmp	dword [qword memTotal], 0x2000	; need min 128MB (3 function calls is required)
 	jb	@b
 @@:
 	call	update_PF_ram
-	cmp	word [PF_pages + 6], 0x400	; min 16MB for #PF, one call gets us max 15.9MB
+	cmp	word [PF_pages + 6], 0x800	; min 32MB for #PF, one call gets us max 15.9MB
 	jb	@b
-
-	call	pci_busScan			   ; TODO: dynamically alloc mem for PCI info
-
-
 
 	call	refill_pagingRam
 
-	; - scan pci bus, get BAR ranges (with some/all bridges skipped - we are using RTC),
-	;   determine mimo access
-	; - boot other CPUs maybe (must have enough RAM)
-	; - write time delay/alert functions (which could be linked to threads - problem)
-	; - write ps2 kbd and mouse with static buffers
-	; - graphical user interface with static buffers
-	; - implement mem mngr
+	; wait for lapic timer speed to be measured so that we can use timers
+@@:
+	cmp	byte [rtc_job], 0
+	jz	.calc_lapicT
+	call	fragmentRAM
 
+	pushf
+	rdtsc  ;
+	popf
 
-	;mov	 rax, [qword acpiTbl]
+	jmp	@b
 
-	mov	[qword 0x137000], rax
-
-	mov	rax, [qword 0x5'00000]
-
-
-;	 call	 refill_pagingRam
-;	 reg r8, 102f
-;
-;	 mov	 rax, [paging_ram]
-;	 mov	 rcx, [paging_ram+8]
-;	 reg	 rax, 100e
-;	 reg	 rcx, 100e
-;	 mov	 rax, [paging_ram+16]
-;	 mov	 rcx, [paging_ram+24]
-;	 reg	 rax, 100e
-;	 reg	 rcx, 100e
+.calc_lapicT:
+	call	lapicT_calcSpeed
 
 
 
-	;mov	 rax, [qword 0xf378782]
 
-
-;.sz11 = 0xc
-;	 sub	 rsp, .sz11*8
-;	 mov	 rax, rsp
-;	 push	 rax .sz11
-;	 call	 alloc4k_ram
-;	 add	 rsp, 16
-
-
-	jmp	$
+	mov	rax, [PF_pages]
+	reg	rax, 100e
+	mov	eax, [qword memTotal]
+	reg	rax, 100e
+@@:
+	;hlt
+	jmp	@b
 
 ;===================================================================================================
 k64err:
