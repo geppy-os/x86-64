@@ -11,6 +11,9 @@
 ; then	     kernel64.asm
 ; that's all
 
+; most variables(memory locations) are defined in this file
+; most constants and offsets are in "const.inc"
+
 
 
 	format binary as 'img'
@@ -90,7 +93,7 @@ gdt		= data1
 gdtr		= data1 + 64
 time		= data1 + 80
 largestLapicID	= data1 + 96
-timeTicks	= data1 + 112
+time		= data1 + 112	; in 500ms units
 
 kCpuId2lapic	= data1 + 1024	; Map kernel CPU id to LapicID; Array index = kCpuId
 				; 4bytes entries(contains LapicID) * 256 CPUs = 1KB
@@ -100,12 +103,18 @@ ioapic_gin	= data1 + 2368	; 4bytes vars; array index = ioapic index; value = ACP
 ioapic_inputCnt = data1 + 2384	; 4bytes = 1byte (for each ioapic) * 4
 				; if 0 - corresponding ioapic doesn't exist (after 'parse_MADT runs')
 
-lapicT_ticks	= data1 + 2388	; runs on one cpu at a time
+calcTimerSpeed	= data1 + 2388	; runs on one cpu at a time
 _?		= data1 + 2408
+
+;---------------------------------------------------------------------------------------------------
+; don't change order of variables in the "lock" sections bellow
+;---------------------------------------------------------------------------------------------------
 
 memPtr		= locks + 128
 memTotal	= locks + 136
 memLock 	= locks + 140
+
+gTimers 	= locks + 256
 
 ; 20byte device entry (for PCI & ISA busses)
 ;-----------------------------------
@@ -136,24 +145,44 @@ idt		equ	r15
 
 ;---------------------------------------------------------------------------------------------------
 
-lapicT_stack	equ	r15+(4096+256)
+lapicT_stack	equ	r15+(4096+512)
 
-rtc_cpuID	equ	r15+((4096+256)-121)	; 1b, RTC attached to this CPU id
-rtc_job 	equ	r15+((4096+256)-122)	; 1b
-lapicT_r15	equ	r15+((4096+256)-128)	; 6bytes, value of R15 in 64KB units
+lapicT_flags	equ	r15+((4096+512)-168)	; bit 0  =1 if 2nd timer list is used to remove entries
+						;				  inside lapicT handler
+						; bit 1  =1 if 2nd timer list is used to add entries
+						;			     inside "timer_in" function
+						; bit 2  =1 if no thread switch requested
+						; bit 3  =1 if lapicT entered handler with bit2 set
+						; bit 4  =1 if we entered the handler due to timer
+lapicT_time	equ	r15+((4096+512)-172)
+lapicT_pri3	equ	r15+((4096+512)-174)
+lapicT_pri2	equ	r15+((4096+512)-176)
+lapicT_pri1	equ	r15+((4096+512)-178)
+lapicT_pri0	equ	r15+((4096+512)-180)
+lapicT_priQuene equ	r15+((4096+512)-184)
+rtc_cpuID	equ	r15+((4096+512)-185)	; 1b, RTC attached to this CPU id
+rtc_job 	equ	r15+((4096+512)-186)	; 1b
+lapicT_r15	equ	r15+((4096+512)-192)	; 6bytes, value of R15 in 64KB units
 
-sp_rtc_cpuID	equ	rsp+7
-sp_rtc_job	equ	rsp+6
-sp_lapicT_r15	equ	rsp
+sp_lapicT_flags    equ	   rsp+24
+sp_lapicT_time	   equ	   rsp+20
+sp_lapicT_pri3	   equ	   rsp+18
+sp_lapicT_pri2	   equ	   rsp+16
+sp_lapicT_pri1	   equ	   rsp+14
+sp_lapicT_pri0	   equ	   rsp+12
+sp_lapicT_priQuene equ	   rsp+8
+sp_rtc_cpuID	   equ	   rsp+7
+sp_rtc_job	   equ	   rsp+6
+sp_lapicT_r15	   equ	   rsp
 
 ;---------------------------------------------------------------------------------------------------
-PF_stack	equ	r15+(4096+512)
+PF_stack	equ	r15+(4096+1024)
 
-PF_?_2		equ	r15+((4096+512)-122)	; 8bytes
-PF_pages	equ	r15+((4096+512)-120)	; 8bytes
-PF_2nd		equ	r15+((4096+512)-121)	; 1byte
-PF_?		equ	r15+((4096+512)-122)	; 1byte
-PF_r15		equ	r15+((4096+512)-128)	; 6bytes, value of R15 in 64KB units
+PF_?_2		equ	r15+((4096+1024)-122)	; 8bytes
+PF_pages	equ	r15+((4096+1024)-120)	; 8bytes
+PF_2nd		equ	r15+((4096+1024)-121)	; 1byte
+PF_?		equ	r15+((4096+1024)-122)	; 1byte
+PF_r15		equ	r15+((4096+1024)-128)	; 6bytes, value of R15 in 64KB units
 
 sp_PF_?_2	equ	rsp+16
 sp_PF_pages	equ	rsp+8
@@ -180,48 +209,46 @@ sp_PF_r15	equ	rsp
 
 ;---------------------------------------------------------------------------------------------------
 
-GP_stack	equ	r15+(4*1024+768)
+GP_stack	equ	r15+(4096+1536)
 
-DF_stack	equ	r15+(4*1024+1024)
+DF_stack	equ	r15+(4096+2048)
 
-HPET1_stack	equ	r15+(4*1024+1280)
+HPET1_stack	equ	r15+(4096+2560)
 
-interrupt_stack equ	r15+(4*1024+1408)
+interrupt_stack equ	r15+(4096+3072)
 
 paging_ram	equ	r15+(8*1024)		; 4KB
 
-tmpTimers	equ	r15+(12*1024)
-tmpEvents	equ	r15+(13*1024)
+;tmpTimers	 equ	 r15+(12*1024)
+;tmpEvents	 equ	 r15+(13*1024)
 
 ;------------------- 1.0KB for frequently used data ------- same 4KB as some other data ------------
 
 idtr		equ	r15+((15*1024)) 	; umm, never really used
 pgRam4_size	equ	r15+((15*1024)+12)
-lapicT_ms	equ	r15+((15*1024)+16)	; # number of lapic timer ticks per millisecond
-lapicT_ms_fract equ	r15+((15*1024)+20)	;			      for the divider of 2
-
-_?		equ	r15+((15*1024)+24)
+lapicT_ms	equ	r15+((15*1024)+16)	; 4b, # of lapic timer ticks per millisecond
+lapicT_ms_fract equ	r15+((15*1024)+20)	; 4b,			       for the divider of 2
+lapicT_us	equ	r15+((15*1024)+24)	; 4b, each microsecond
+lapicT_us_fract equ	r15+((15*1024)+28)	; 4b
+process_ptr	equ	r15+((15*1024)+40)
+process_cnt	equ	r15+((15*1024)+48)
+process_lock	equ	r15+((15*1024)+52)
+currentPID	equ	r15+((15*1024)+56)	; 4b
+_?		equ	r15+((15*1024)+60)
+kernelPanic	equ	r15+((15*1024)+64)	; 8b
+timers1 	equ	r15+((15*1024)+72)	;
+timers_local	equ	r15+((15*1024)+72)	;
+_?		equ	r15+((15*1024)+100)
+timers_head	equ	r15+((15*1024)+104)	; 2 2byte vars
+timers_cnt	equ	r15+((15*1024)+108)	; 2 2byte vars
+k64_flags	equ	r15+((15*1024)+112)	; bit0 =1 if lapicT is active (can't put CPU to sleep)
+_?		equ	r15+((15*1024)+120)
 
 tss_data	equ	r15+(16*1024-2176)	; TSS is closer to threads, same 4KB (2176=2048+128)
-threads 	equ	r15+(16*1024-2048)	; 16KB, initial threads inside same 4KB as other data
+process 	equ	r15+(16*1024-2048)	; 16KB (initial processes use same 4KB as other data)
 PF_ram		equ	r15+(32*1024)		; 32KB
 pgRam4		equ	r15+(64*1024)		; 4KB
-
-
-; 800 threads per 16KB
-;------------------------------------------------------------------
-;index in CPU private array = local to the CPU thread id
-;------------------------------------------------------------------
-;  +0 4byte phys addr of the control block
-;  +4 4byte lin addr (for non position independed code)
-;  +8 2byte globalThreadID
-; +10 2byte next
-; +12 2byte prev (for priority lists)
-; +14 2byte time meant to run
-; +16 4byte time left to run (positive - can still run, negative - ran too much)
-;	     (can accumulate over time)
-
-kStack		equ	r15+(128*1024)	; 64KB
+kStack		equ	r15+(128*1024)		; 64KB
 
 ;===================================================================================================
 
@@ -236,6 +263,7 @@ kStack		equ	r15+(128*1024)	; 64KB
 	include 'memory.asm'
 	include 'devices_ints.asm'
 	include 'pci.asm'
+	include 'timers_alerts.asm'
 
 	include 'bigDump/numbers.asm'
 
@@ -245,6 +273,7 @@ kStack		equ	r15+(128*1024)	; 64KB
 
 LMode_data:
 
+	include 'errors.inc'
 	include 'plug_and_play.inc'
 
 _idt_exceptions_lmode:

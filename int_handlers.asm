@@ -114,7 +114,10 @@ int_SS:
 int_GP:
 	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('G' shl 16)
 	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('_' shl 16)
-	jmp $
+
+
+	mov	eax, [rsp]
+	jmp	$
 
 	iretq
 

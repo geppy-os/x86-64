@@ -160,13 +160,15 @@ LMode:
 	mov	[qword lapic + LAPIC_SVR], eax
 	mov	dword [qword lapic + LAPIC_DFR], 0xf000'0000	; flat model
 	mov	dword [qword lapic + LAPICT_DIV], 0		; divide by 2, once and forever
-	mov	dword [qword lapic + LAPICT], 0x2'0020
+	mov	dword [qword lapic + LAPICT], 0x0'0020
 
-	sti
 	xor	eax, eax
 	mov	cr8, rax
+	sti
 
 	; init RTC and measure LapicTimer speed
+	;-------------------------------------------
+
 	mov	r8d, 0x11'f1
 	mov	r9, 'PNP0B00' ; find this ID in ACPI, load driver that provides int handler
 	call	dev_install
@@ -185,9 +187,13 @@ LMode:
 	call	refill_pagingRam
 
 	; wait for lapic timer speed to be measured so that we can use timers
+	;     We can't put CPU to sleep as lapic timer will be suspended And there will be a slight
+	;     delay before timer returns to full speed as CPU is waking up.
+	;     A simple HLT instruction on modern CPUs will put CPU to noticebale sleep mode.
+
 @@:
 	cmp	byte [rtc_job], 0
-	jz	.calc_lapicT
+	jz	.calc_timer_speed
 	call	fragmentRAM
 
 	pushf
@@ -196,25 +202,75 @@ LMode:
 
 	jmp	@b
 
-.calc_lapicT:
+.calc_timer_speed:
 	call	lapicT_calcSpeed
 
+	;call	 thread_create				 ; create system process
+
+	mov	dword [timers_local + TIMERS.1stFree], -1	; init timer list
+
+	mov	byte [qword 0], 0x30
+
+	mov	r8d, 1000*0x35+10
+	lea	r9, [timer_entry]
+	call	timer_in
+	mov	r8d, 1000*0x39+10
+	lea	r9, [timer_entry]
+	call	timer_in
+	mov	r8d, 1000*0x37+10
+	lea	r9, [timer_entry]
+	call	timer_in
+	mov	r8d, 1000*0x33+10
+	lea	r9, [timer_entry]
+	call	timer_in
 
 
 
+
+	mov	eax, [lapicT_ms]
+	reg	rax, 81e
+	mov	eax, [lapicT_us]
+	reg	rax, 81e
 	mov	rax, [PF_pages]
-	reg	rax, 100e
+	reg	rax, 101e
 	mov	eax, [qword memTotal]
-	reg	rax, 100e
+	reg	rax, 101e
+
+
+;===================================================================================================
+	align 8
+os_loop:
+	test	dword [k64_flags], 1
+	jnz	@f
+	mov	rax, cr8
+	hlt
 @@:
-	;hlt
-	jmp	@b
+	jmp	os_loop
+
+
+
+timer_entry:
+	ret
+
+
 
 ;===================================================================================================
 k64err:
 	mov	rax, 'L O N G '
 	mov	[qword 900], rax
 	jmp	$
+
+.allocLinAddr:
+	mov	qword [kernelPanic], 1
+	jmp	.kernelPanic
+
+.kernelPanic:
+	mov	rax, 'X 6 4 P '
+	mov	[qword 800], rax
+	mov	rax, 'A N I C '
+	mov	[qword 808], rax
+	jmp	$
+
 
 ;===================================================================================================
 reg64:

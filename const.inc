@@ -22,6 +22,7 @@ define PG_PS		(1 shl 7)
 define PG_G		(1 shl 8)
 define PG_ALLOC_USER	(1 shl 10)
 define PG_ALLOC 	(1 shl 11)
+define PG_ZERO_ONACCESS (1 shl ?)
 define PG_XD		(1 shl 63)
 
 
@@ -39,5 +40,44 @@ struct VBE
   modeNumber	dw ?
   dummy 	dw ?
 
+ends
+
+;-------------------------------------------------------------
+; 800 threads per 16KB
+; index in CPU private array = local to the CPU process id
+
+struct THREAD
+  physAddr	dd ?		; phys addr of the control block
+  linAddr	dd ?		; lin addr (for non position independed code), optional
+  next		dw ?		; next
+  prev		dw ?		; prev (for priority lists)
+  gPID		dw ?		; global Process ID
+  time2run	dw ?		; time meant to run
+  timeLeft2run	dd ?		; positive - can still run, negative - ran too much
+ends				;			    (can accumulate over time)
+
+
+; if TIMER entry is not allocated then data2 = 2byte index of next free(unallocated) entry
+
+struct TIMER
+  returnPtr	dq ?
+  data1 	dq ?
+  data2 	dq ?
+  wakeUpAt	dq ?		; low 4bytes time in milliseconds, top 4bytes = # of microseconds
+  next		dw ?
+  prev		dw ?
+  gPID		dw ?		; global process id
+  cpuID 	dw ?
+ends
+
+
+struct TIMERS
+  ptr		dq ?
+  blockSz	dd ?
+  1stFree	dd ?
+  head		dd ?
+  cnt		dd ?
+  head2 	dd ?
+  cnt2		dd ?
 ends
 

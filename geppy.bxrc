@@ -1,5 +1,5 @@
-romimage: file="C:\Program Files\Bochs\BIOS-bochs-latest", address=0xfffe0000
-vgaromimage: file="C:\Program Files\Bochs\VGABIOS-lgpl-latest"
+romimage: file="C:\Program Files\Bochs-2.6.8\BIOS-bochs-latest", address=0xfffe0000
+vgaromimage: file="C:\Program Files\Bochs-2.6.8\VGABIOS-lgpl-latest"
 vga: extension=vbe
 
 megs: 512

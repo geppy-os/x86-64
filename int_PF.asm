@@ -146,6 +146,8 @@ int_PF:
 	; need to switch to another page if cached page size reached zero
 	;jmp	k64err
 
+  ; look thru pages - if none mapped and global mapped ram size 0 then exit #PF into ring0 and alloc,map
+
 .exit:
 	mov	byte [sp_PF_2nd], 0x33
 	add	rsp, 24
@@ -171,8 +173,8 @@ int_PF:
 
 ; PG_ALLOC bit is not set
 .notAllocated:
-	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + '-' + ('A' shl 16)
-	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'L' + ('C' shl 16)
+	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'A' + ('L' shl 16)
+	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'O' + ('C' shl 16)
 	jmp	$
 
 ; bitmask in "PF_pages" is empty (all 8 bits set)

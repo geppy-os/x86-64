@@ -5,6 +5,6 @@ fasm geppy.asm kiwi.img
 
 if [ -e kiwi.img ]; then
   cp kiwi.img ../a -f
-  wine "C:\\Program Files\Bochs\bochs.exe" -f geppy.bxrc -q
+  wine "C:\\Program Files\Bochs-2.6.8\bochs.exe" -f geppy.bxrc -q
 fi
 	

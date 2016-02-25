@@ -224,8 +224,8 @@ alloc_linAddr:
 	jnz	@f
 	mov	r8, r9
 	call	mem4kb_zero	; TODO: best map with cache disable, test, remap, and then zero
-				;      What if one bad page is found ???
-				;     Easiest is to free them all and start over
+				;    What if one bad page is found ???
+				;    Easiest is to thow all the pages out and start over
 @@:
 	clc
 	pop	rcx
@@ -246,7 +246,7 @@ alloc4kb_ram:
 .stack=64
 	mov	rdi, [rsp + .stack+8]		; RDI
 .alloc:
-	noThreadSw
+	call	noThreadSw
 
 	mov	eax, [pgRam4_size]
 	cld
@@ -334,10 +334,10 @@ alloc4kb_ram:
 	cmp	dword [rsp + .stack], 0
 	jz	.exit
 
-	resumeThreadSw
+	call	resumeThreadSw
 	jmp	.alloc
 .exit:
-	resumeThreadSw
+	call	resumeThreadSw
 	pop	rdx rbp rbx rdi rsi rcx rax
 	ret
 
@@ -350,7 +350,7 @@ alloc4kb_ram:
 	shl	rcx, 12
 	mov	qword [rsi*8], 0
 	invlpg	[rcx]
-	resumeThreadSw
+	call	resumeThreadSw
 	jmp	.alloc
 
 	jmp	k64err
@@ -366,7 +366,7 @@ refill_pagingRam:
 
 	; try taking one host 4KB page away from #PF first
 .local_alloc:
-	noThreadSw
+	call	noThreadSw
 
 	mov	rax, [PF_pages]
 	movzx	edi, al 	; dil = bitmask
@@ -409,7 +409,7 @@ refill_pagingRam:
 
 	cmpxchg [PF_pages], rdi
 	jz	@f
-	resumeThreadSw
+	call	resumeThreadSw
 	jmp	.local_alloc
 @@:
 	; map the 4kb page
@@ -430,10 +430,10 @@ refill_pagingRam:
 
 	; get a lock
 	mov	edi, memPtr
-@@:	resumeThreadSw
+@@:	call	resumeThreadSw
 	bt	dword [rdi + 12], 0
 	jc	@b
-	noThreadSw
+	call	noThreadSw
 	lock
 	bts	dword [rdi + 12], 0
 	jc	@b
@@ -480,7 +480,7 @@ refill_pagingRam:
 	shr	r8, 12
 	shl	r8, 12
 
-	resumeThreadSw
+	call	resumeThreadSw
 	pop	rbp rsi rcx rdi rax
 	ret
 
@@ -498,7 +498,7 @@ refill_pagingRam:
 	align 8
 update_PF_ram:
 	push	rax rcx rsi rdi
-	noThreadSw		    ; TODO: quene made of functions
+	call	noThreadSw		    ; TODO: quene made of functions
 
 	; TODO: we need to unmap old pages first (PF handler does set bits but doesn't unmap)
 
@@ -514,7 +514,7 @@ update_PF_ram:
 	mov	edi, memPtr
 	lock
 	bts	dword [rdi + 12], 0	; set global lock bit first, then can put cpuID bit
-	jc	@b
+	jc	@b			; TODO: if we can't get lock - resumeThreadSw
 
 	mov	r12, [rdi]		; ptr
 
@@ -561,7 +561,7 @@ update_PF_ram:
 
 	clc
 .exit:
-	resumeThreadSw
+	call	resumeThreadSw
 	pop	rdi rsi rcx rax
 	ret
 

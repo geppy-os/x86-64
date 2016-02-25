@@ -7,23 +7,24 @@ init_ps2Mouse:
 
     align 8
 rtc_int:
-	push	r15 r8 rax rcx rsi rdi rdx
-	sub	rsp, 32
+	push	r15 r8 rax rcx rsi rdi
+	sub	rsp, 104
 
 	mov	eax, 0xc
 	out	0x70, al
 	in	al, 0x71
 
 	cmp	byte [sp_rtc_job], 0x7f
-	jz	.first_init			; 1st interrupt after initialization is ignored
+	jz	.first_init			; 1st interrupt is ignored (after initialization)
 	ja	.lapicT_restart
 
 	add	byte [qword 8], 1
+	add	byte [qword time], 1		; <-- need to change this into 31bit value
 
 .exit:
+	add	rsp, 104
+	pop	rdi rsi rcx rax r8 r15
 	mov	dword [qword lapic + LAPIC_EOI], 0
-	add	rsp, 32
-	pop	rdx rdi rsi rcx rax r8 r15
 	iretq
 
 .first_init:
@@ -35,8 +36,7 @@ rtc_int:
 .get_time:
 
 ;----------------------------------------------------------------------------------------------------=
-	; we measure lapic timer ticks 4 times,
-	; if too much inconsistency during these 4 times - we repeat
+	; we measure lapic timer ticks 5 times,
 
 	align 8
 .lapicT_restart:
@@ -49,14 +49,16 @@ rtc_int:
 	cmp	ecx, 5				; did we have enough samples ?
 	ja	@f				; jump if so
 
-	; save values from [lapic + LAPICT_CURRENT] at [lapicT_ticks + offset]
-	mov	esi, lapicT_ticks
+	; save values from [lapic + LAPICT_CURRENT] at [calcTimerSpeed + offset]
+	mov	esi, calcTimerSpeed
 	lea	rsi, [rsi + rcx*4 - 4]
 	mov	[rsi], eax
 	jmp	.exit
 @@:
 	; stop measurment of lapic timer speed
 
+	mov	dword [qword lapic + LAPICT_INIT], 0		; stop timer
+	and	dword [qword lapic + LAPICT], not (1 shl 16)	; and unmask
 	mov	byte [sp_rtc_job], 0
 
 	mov	r8d, 1111b			; interrupt happens twice a second
