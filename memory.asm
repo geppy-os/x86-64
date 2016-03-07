@@ -1,10 +1,119 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
+
 ;===================================================================================================
-;    alloc_linAddr   -	 allocate linear addrs were #PF will map physical RAM later
+;    mem_setFlags  -  set paging flags for individual 4KB pages, lin addr must already be allocated
+;===================================================================================================
+; input: r8  = linear address in bytes, must be 4KB aligned
+;	 r9  = size in bytes, must be a multiple of 4KB
+;	 r12 = paging flags, all flags zeroed and replaced with r12
+;
+;--------------------------------------------------------------------------------------------------
+; Size at R9 is limited only by available x64 linear space but function operates on 2MB at a time.
+; If possible use alloc_linAddr to alloc 2MB and then use mem_setFlags to change flags within 2MB.
+; Until function returns, one portion of memory may use one set of flags, another - different flags
+
+	align 8
+mem_setFlags:
+	push	rax rcx rsi rdi rbp
+;	 mov	 byte [errFL + FUNC_MEMSETFLAGS], 1	; per thread all of these
+;	 add	 byte [errF + FUNC_MEMSETFLAGS], 1
+
+	mov	rdi, 4095
+	test	r9, rdi
+	jnz	.err
+	test	r8, rdi
+	jnz	.err
+	mov	rdi, 0x7fff'ffff'ffff
+	shr	r9, 12				; size -> 4KB units
+	jz	.err
+	cmp	r8, rdi 			; less than 128TB staring addr
+	ja	.err
+
+.process_2MB:
+	ror	r8, 39
+	mov	rsi, 0xffff'ffff'ffff'fe00
+
+	or	rsi, r8
+	mov	rdi, [rsi*8]			; get PDP address from PML4 entry
+	mov	rsi, 0xffff'ffff'fffc'0000
+	rol	r8, 9			   ; 1
+	xor	edi, 1				; invert Present flag
+	test	edi, 1000'0001b 		; PS(pageSize) must be 0, P(present) must be 1
+	jnz	.err				; invalid PML4 entry
+
+	or	rsi, r8
+	mov	rdi, [rsi*8]			; get PD address from PDP entry
+	mov	rsi, 0xffff'ffff'f800'0000
+	rol	r8, 9			   ; 2
+	xor	edi, 1
+	test	edi, 1000'0001b
+	jnz	.err				; invalid PDP entry
+
+	or	rsi, r8
+	mov	rdi, [rsi*8]			; get PT address from PD entry
+	xor	edi, 1
+	test	edi, 1000'0001b
+	jnz	.err				; invalid PD entry
+
+	mov	rsi, 0xffff'fff0'0000'0000
+	rol	r8, 9			   ; 3
+	or	rsi, r8 			; RSI = PT entry (points to 4 KB)
+	mov	edi, esi
+	mov	ecx, esi
+	or	edi, 0x1ff
+	and	ecx, 0x1ff
+	and	edi, 0x1ff
+	sub	edi, ecx			; number of PT entries - 1
+	add	edi, 1
+	rol	r8, 12			   ; 4	  total 39bits
+	cmp	rdi, r9
+	cmova	rdi, r9
+	sub	r9, rdi 			; global page counter -= local
+
+
+
+	mov	rax, not 0x7fff'ffff'f000
+	mov	rcx, 0x7fff'ffff'f000
+	and	r12, rax
+	mov	rbp, r8
+@@:
+	mov	rax, [rsi*8]
+	test	rax, PG_ALLOC			; TODO: separate loops for validate, write & invlpg
+	jz	k64err
+	and	rax, rcx
+	or	rax, r12
+	mov	[rsi*8], rax
+	invlpg	[rbp]
+	add	rbp, 4096
+	add	rsi, 1
+	sub	edi, 1
+	jnz	@b
+
+
+	; switch to next 2MB (at r8)
+	or	r8, 0x1fffff
+	test	r9, r9
+	jz	.ok
+	add	r8, 1
+	jmp	.process_2MB
+
+.ok:
+	;and	 dword [errF], not FUNC_MEMSETFLAGS
+	clc
+
+.exit:	pop	rbp rdi rsi rcx rax
+	ret
+.err:
+	stc
+	jmp	.exit
+
+
+;===================================================================================================
+;    alloc_linAddr  -  allocate linear addrs were #PF will map physical RAM later
 ;===================================================================================================
 ; input: r8  = linear address in 16KB units (addr, after converted to bytes must be 2MB aligned)
 ;	 r9  = size in 16KB units (max 0x10000), must be a multiple of 2MB when converted to bytes
@@ -12,7 +121,7 @@
 ;
 ; return: CF=1 if failed, otherwise CF=0
 ;
-;---------------------------------------------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; None of the linear memory in range of "addr + size" must be mapped prior to calling this function.
 ; Lin addr + size can't cross 1GB alignment. 1GB = 0x40000000 bytes = 0x10000 16KB units
 ;								    128TB = 0x2'0000'0000 16KB units
@@ -56,8 +165,7 @@ alloc_linAddr:
 	shl	r13, 14 		; convert to bytes from 16kb units
 	shl	rsi, 14
 	mov	rdi, r13
-	mov	ebx, r12d		; rbx - flags
-	mov	ebx, 3
+	mov	rbx, r12		; rbx - flags
 
 	; PDP(512GB) & PD(1GB) are shared among starting $ ending addrs (making this func simpler)
 
@@ -79,6 +187,7 @@ alloc_linAddr:
 
 	; none of the PDes must be in use since start addr is 2MB aligned and size is 2MB aligned
 .verify_PDes:
+	;reg	 r8, 32f
 	ror	rdi, 21 		; starting PDe, will be starting PTe later
 	ror	rsi, 21 		; ending PDe		 ending PTe
 	mov	eax, edi
@@ -121,6 +230,7 @@ alloc_linAddr:
 
 .alloc_ram:
 	lea	eax, [r8 + rbp]
+	;reg	 rax, 32f
 	shl	eax, 3
 	sub	rsp, rax		; RSP modified
 	shr	eax, 3
@@ -137,6 +247,7 @@ alloc_linAddr:
 	ror	r13, 18
 
 	sub	eax, ebp		; restore original r8 (whenether PDP or PD tables present)
+	;reg	 rax, 32f
 	jz	.map_PTs
 	cmp	eax, 2
 	jb	.map_PD
@@ -157,17 +268,22 @@ alloc_linAddr:
 	add	rsp, 8			; remove "mov r8,[rsp]" value
 
 .map_PTs:
+	;reg	 rbp, 32f
 	mov	r10, rdi
-	mov	r11, rbp
+	mov	r11, rbp		; ??
 	mov	r12, 0x1fff'fff0'0000'0000 shl 3
 @@:
+	mov	eax, ebx
 	mov	r8, [rsp]
+	and	eax, PG_USER + PG_ALLOC 	; allowed user specified flags
 	add	rsp, 8
+	or	r8, rax
 	mov	r9, 0xffff'ffff'f800'0000
-	btr	r8, 63
+	btr	r8, 63			; remove dirty/zeroed bit, we'll fill this page with values
 	or	r9, rdi
-	or	r8, rbx
+	or	r8, PG_P + PG_RW
 	mov	[r9*8], r8
+	;reg	 r8, 105f
 	shl	r9, 12			; entry #0 in the table (low 12bits are zero)
 	or	r9, r12
 	invlpg	[r9]
@@ -189,11 +305,14 @@ alloc_linAddr:
 	rol	rbp, 9
 	rol	rcx, 9
 	or	rdi, r9
+	mov	r8, PG_USER + PG_RW + PG_ALLOC + PG_MORE_STACK + PG_XD
 	and	ebp, 0x3ffff		; 18bits (PDes & PTes)
 	and	ecx, 0x3ffff
+	and	rbx, r8
 	shl	rdi, 3
-	mov	eax, PG_ALLOC
 	sub	ecx, ebp		; number of entries (generally, many hundreds)
+	mov	rax, rbx
+	;reg	 rax, 106f
 	add	ecx,  4 		; += 16KB ! ! !
 	rep	stosq			; stosQ, fastest filling method on x64 unless AVX involved
 
@@ -211,14 +330,20 @@ alloc_linAddr:
 .map_page:
 	push	rcx
 
+	mov	ecx, ebx
+	and	ecx, PG_USER + PG_ALLOC 	; allowed user specified flags
+	or	r8, rcx
+
 	btr	r8, 63
 	setc	cl
-	or	r8, rbx
+	or	r8, PG_P + PG_RW
 	or	r9, r13
 	mov	[r9*8], r8		; map table
 	shl	r9, 12			; entry #0 in the table (low 12bits are zero)
 	or	r9, r12
 	invlpg	[r9]
+
+	;reg	 r8, 104f
 
 	test	cl, cl
 	jnz	@f
@@ -232,13 +357,14 @@ alloc_linAddr:
 	ret
 
 
-
 ;===================================================================================================
-; Function is meant to be used to allocate ram for paging structures only
-; That is separate 4kb pages to hold PML4s, PDPs, PDs and PTs.
+;   alloc4kb_ram
 ;===================================================================================================
 ; input:  mem ptr where to save physical ram addrs, one 4kb page - one 8byte addr
 ;	  number of 8kb pages to allocate (TODO: dirty pages are always prefered)
+;---------------------------------------------------------------------------------------------------
+; Function is meant to be used to allocate ram for paging structures only
+; That is separate 4kb pages to hold PML4s, PDPs, PDs and PTs.
 
 	align 8
 alloc4kb_ram:
@@ -688,8 +814,6 @@ fragmentRAM:
 	lock
 	bts	dword [rdi + 12], 0
 	jc	@b
-
-; OR and "js" size flag
 
 	mov	rax, [rdi]		; ptr
 	mov	edx, [rdi + 8]		; total mem

@@ -1,3 +1,8 @@
+
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
+; All Rights Reserved.
+
+
 define IA32_STAR	0xc0000081
 define IA32_LSTAR	0xc0000082
 define IA32_FMASK	0xc0000084
@@ -16,45 +21,52 @@ define LAPICT_CURRENT	0x0390
 define LAPICT_DIV	0x03e0
 define LAPIC_MSR	0x1b		; IA32_APIC_BASE
 define PG_PRESENT	1
+define PG_P		1
 define PG_RW		2
 define PG_USER		4
 define PG_PS		(1 shl 7)
 define PG_G		(1 shl 8)
-define PG_ALLOC_USER	(1 shl 10)
+define PG_ALLOC_USER	(1 shl 9)	; ?
+define PG_MORE_STACK	(1 shl 10)	; alloc more stack, upper page must be mapped and have this flag
 define PG_ALLOC 	(1 shl 11)
 define PG_ZERO_ONACCESS (1 shl ?)
 define PG_XD		(1 shl 63)
 
+define FUNC_ALLOCLINADDR	0
+define FUNC_MEMSETFLAGS 	1
+
 
 struct VBE
-
   width 	dw ?
   height	dw ?
-
   lfb		dd ?
-
   bps		dw ?	; bytes per scanline
   bpp		db ?	; bits per pixel
   clrMode	db ?
-
   modeNumber	dw ?
   dummy 	dw ?
-
 ends
 
-;-------------------------------------------------------------
+;--------------------------------------------------------------------------------------------------
 ; 800 threads per 16KB
 ; index in CPU private array = local to the CPU process id
 
 struct THREAD
-  physAddr	dd ?		; phys addr of the control block
-  linAddr	dd ?		; lin addr (for non position independed code), optional
   next		dw ?		; next
   prev		dw ?		; prev (for priority lists)
-  gPID		dw ?		; global Process ID
-  time2run	dw ?		; time meant to run
+
+  gTID		dw ?		; global Thread ID, if	=0 then we use predefined value for all
+				;		    if !=0 then start with "physAddr" and "gTID"
+				; gTID gives us linear addr and while we are inside timer
+				; interrupt (ring0) - we can access everything at that linear addr
+
+  time2run	dw ?		; time meant to run in microseconds, max 65.535 milliseconds
+
   timeLeft2run	dd ?		; positive - can still run, negative - ran too much
 ends				;			    (can accumulate over time)
+
+; need pml4 location for ring0 sys thread or we can't switch
+
 
 
 ; if TIMER entry is not allocated then data2 = 2byte index of next free(unallocated) entry

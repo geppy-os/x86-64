@@ -3,8 +3,6 @@
 ; All Rights Reserved.
 
 
-; TODO: if addr belongs to paging hierachy (top bits are 1s 0xffff... ) then kernel panic
-
 	 align 8
 int_PF:
 	push	r8 r15 rax rcx rsi rdi rbx
@@ -15,7 +13,7 @@ int_PF:
 	mov	rbp, cr2
 	mov	r15, [sp_PF_r15]
 
-	; in case somebody made a mess wring this handler (2nd #PF while executing this handler)
+	; in case somebody made a mess writing this handler (2nd #PF while executing this handler)
 	cmp	byte [sp_PF_2nd], 0x5a
 	jz	.2nd_PF
 	mov	byte [sp_PF_2nd], 0x5a
@@ -24,8 +22,7 @@ int_PF:
 	;mov	 dword [qword 36], (0x4f shl 24) + (0x4f  shl 8) + 'F' + ('_' shl 16)
 	;mov	 esi, [qword reg32.cursor]
 	;mov	 dword [qword reg32.cursor], 42
-	;lea	 rax, [rsp+112]
-	;reg	 rax, 104f
+	;reg	 rax, 44f
 	;reg	 rbp, 104f
 	;mov	 [qword reg32.cursor], esi
 
@@ -36,11 +33,17 @@ int_PF:
 	; All paging tables are always mapped
 	; They are never unmapped even if PT entries are not beeing used for a long time
 
+	; if addr belongs to paging hierarchy (top bits are 1s 0xffff... ) then kernel panic
+	; its additional sanity check, there was an issue with Bochs emulator
+	bt	rbp, 63
+	jc	k64err
+
 	ror	rbp, 39
 	mov	rsi, 0xffff'ffff'ffff'fe00
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PDP address from PML4 entry
+	;reg	 rdi, 101f
 	mov	rsi, 0xffff'ffff'fffc'0000
 	rol	rbp, 9			   ; 1
 	xor	edi, 1				; invert Present flag
@@ -49,6 +52,7 @@ int_PF:
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PD address from PDP entry
+	;reg	 rdi, 101f
 	mov	rsi, 0xffff'ffff'f800'0000
 	rol	rbp, 9			   ; 2
 	xor	edi, 1
@@ -57,6 +61,7 @@ int_PF:
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PT address from PD entry
+	;reg	 rdi, 101f
 	mov	rsi, 0xffff'fff0'0000'0000
 	rol	rbp, 9			   ; 3
 	xor	edi, 1
@@ -67,8 +72,9 @@ int_PF:
 	shr	rsi, 2				;	align to a multiple of 4
 	shl	rsi, 2				;	we operate in 16KB chunks
 	mov	rdi, [rsi*8]
-	test	edi, 1
-	jnz	k64err
+	;reg	 rdi, 101f
+	test	edi, 1				; Must be zero. Issue (=1) happens on Bochs-2.68 emulator
+	jnz	k64err				;    but error code reports correct "page not present"
 	test	edi, PG_ALLOC
 	jz	.notAllocated
 
@@ -117,6 +123,7 @@ int_PF:
 	shl	rdi, 14
 	or	rdi, 3
 	mov	[rsi*8], rdi
+	;reg	 rdi, 102f
 	add	rdi, 4096
 	mov	[rsi*8 + 8], rdi
 	add	rdi, 4096
@@ -153,12 +160,16 @@ int_PF:
 	add	rsp, 24
 	pop	rbx rdi rsi rcx rax r15 r8 rbp
 	iretq
+
+;Error Code
+
 ;SS
 ;RSP
-;RFLAGS
-;CS
+
 ;RIP
-;Error Code
+;CS
+;RFLAGS
+
 
 ; it can be that no pages are mapped but size is not zero at "PF_pages"
 ; if this case 'alloc_ram' is allocating ram from PF pool
@@ -169,35 +180,44 @@ int_PF:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + '2' + ('n' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'd' + ('!' shl 16)
 	reg	rbp, 10cf
-	jmp	$
+	jmp	.err
 
 ; PG_ALLOC bit is not set
 .notAllocated:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'A' + ('L' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'O' + ('C' shl 16)
-	jmp	$
+	jmp	.err
 
 ; bitmask in "PF_pages" is empty (all 8 bits set)
 .noHostPagesMapped:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + '-' + ('H' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 's' + ('T' shl 16)
-	jmp	$
+	jmp	.err
 
 ; no PageDirectoryPointer (512GB chunk)
 .invalid_PML4e:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('M' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'L' + ('e' shl 16)
-	jmp	$
+	jmp	.err
 
 ; no PageDirectory (1GB chunk)
 .invalid_PDPe:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('D' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('e' shl 16)
-	jmp	$
+	jmp	.err
 
 ; no PageTable (2MB chunk)
 .invalid_PDe:
 	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('D' shl 16)
 	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'e' + (' ' shl 16)
-	jmp	$
+	jmp	.err
 
+.err:
+	mov	dword [qword 32], (0x4f shl 24) + (0x4f  shl 8) + '_' + ('P' shl 16)
+	mov	dword [qword 36], (0x4f shl 24) + (0x4f  shl 8) + 'F' + ('_' shl 16)
+	mov	esi, [qword reg32.cursor]
+	mov	dword [qword reg32.cursor], 42
+	mov	rbp, cr2
+	reg	rbp, 104f
+	mov	[qword reg32.cursor], esi
+	jmp	 $

@@ -1,5 +1,5 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
@@ -205,24 +205,52 @@ LMode:
 .calc_timer_speed:
 	call	lapicT_calcSpeed
 
-	;call	 thread_create				 ; create system process
+	; bit set - thread id available
+	xor	eax, eax
+	mov	rcx, gThreadIDs
+	not	rax
+	mov	[rcx + 8 ], rax
+	mov	[rcx + 16], rax
+	mov	[rcx + 24], rax
+	shl	rax, 2
+	mov	[rcx], rax
 
-	mov	dword [timers_local + TIMERS.1stFree], -1	; init timer list
 
-	mov	byte [qword 0], 0x30
+	; this simply sets some vars, we are in a system thread already
+	call	thread_create_system
+
+
+
+	mov	qword [lapicT_time], 0
+	;mov	 dword [qword lapic + LAPICT_INIT], 0x20202
+
 
 	mov	r8d, 1000*0x35+10
 	lea	r9, [timer_entry]
 	call	timer_in
+
 	mov	r8d, 1000*0x39+10
 	lea	r9, [timer_entry]
 	call	timer_in
-	mov	r8d, 1000*0x37+10
-	lea	r9, [timer_entry]
-	call	timer_in
-	mov	r8d, 1000*0x33+10
-	lea	r9, [timer_entry]
-	call	timer_in
+
+	;mov	 r8d, 1000*0x37+10
+	;lea	 r9, [timer_entry]
+	;call	 timer_in
+	;mov	 r8d, 1000*0x33+10
+	;lea	 r9, [timer_entry]
+	;call	 timer_in
+
+
+
+
+	;mov	 r8, PG_USER
+	;mov	 r9d, 64
+	;call	 thread_create
+	;jc	 k64err
+
+	;mov	 [qword  512*1024*1024*1024*2 + 0x200000-8], rax
+
+
 
 
 
@@ -240,7 +268,7 @@ LMode:
 ;===================================================================================================
 	align 8
 os_loop:
-	test	dword [k64_flags], 1
+	test	dword [k64_flags], 1	; could use LAPICT_CURRENT OR LAPICT_INIT(better)
 	jnz	@f
 	mov	rax, cr8
 	hlt

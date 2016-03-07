@@ -1,5 +1,5 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
@@ -40,133 +40,60 @@ timer_in:
 	cmp	r8, 1000*1000
 	ja	.err
 
-.got_free_enties:
-
-	call	noThreadSw
-
-	cmp	[timers_local + TIMERS.1stFree], -1
-	jnz	.mem_ok
-
-	call	resumeThreadSw
-
-	push	r8 r9 r12 r13 r14
-
-	mov	rax, [rbp + TIMERS.ptr] 	; could be 0, ok
-	mov	r9d, [rbp + TIMERS.blockSz]
-	mov	r8, rax
-	mov	ecx, r9d
-	add	r9d, 16384
-	shr	r8, 14
-	shr	r9d, 14
-
-	mov	rax, 0xa00000/16384
-	mov	r9, 0x200000/16384
-	mov	r8, rax
-	shl	rax, 14
-	call	alloc_linAddr
-	jc	k64err.allocLinAddr		; need realloc without freeing already allocated mem
-
-	pop	r14 r13 r12 r9 r8
-
-	call	noThreadSw
-
-	; TODO:
-	; by this time "1stFree" might be different (!= -1)
-	; different thread migh've used timer_in, so "1stFree" and timer list is totally unpredicatable
-
-	; basically code bellow waiting for proper malloc & realloc fnctions
-
-	mov	qword [timers_local + TIMERS.ptr], rax		; rax
-	mov	dword [timers_local + TIMERS.blockSz], 16384	; ecx
-	mov	dword [timers_local + TIMERS.1stFree], 0
-	mov	dword [timers_local + TIMERS.cnt], 0
-	mov	dword [timers_local + TIMERS.cnt2], 0
-	; ? 2 heads
-	; ? 2 counters
-
-	; setup free entries:
-
-	mov	esi, 16384/sizeof.TIMER - 1
-	mov	ecx, 1
-@@:
-	mov	[rax + TIMER.data2], rcx		; temp next free entry
-	add	rax, sizeof.TIMER
-	add	ecx, 1
-	sub	esi, 1
-	jnz	@b
-	xor	ecx, ecx
-	not	rcx
-	mov	[rax + TIMER.data2], rcx
-
-	; code above can take a while and so we see if we need to switch threads
-	call   resumeThreadSw
-	jmp    .got_free_enties
-
-;---------------------------------------------------------------------------------------------------
-	align 8
-.mem_ok:
-	xor	ecx, ecx
-	bt	dword [lapicT_flags], 1
-	mov	edi, [lapicT_time]
-	setc	cl
-	add	r8, rdi 		; += current time
-	jnc	@f
-
-	; switch timer list if overflow
-	; counter and head depend on list switch (both modified by timer_insert)
-
-	jmp k64err
-	xor	dword [lapicT_flags], 10b  ; ???
-	xor	ecx, 1			   ; ???
-
-@@:
-	; convert to milliseconds (return in EAX), with remainder in microseconds (return in R8D)
+	; convert to milliseconds + microseconds frist, then to lapic timer ticks
 	mov	esi, 1000
 	xor	eax, eax
 	xor	edx, edx
-	cmp	r8, rsi
-	jb	@f
 	mov	eax, r8d
 	div	rsi
-	mov	r8d, edx		; eax:r8d = ms:us
-@@:
-	shl	rax, 32
-	or	r8, rax
-	shl	rcx, 63
-	mov	r14, r8
+	mov	edi, [lapicT_ms]
+	mov	esi, [lapicT_us]
+	mov	ecx, edx
+	imul	rax, rdi
+	imul	rcx, rsi
+	add	rax, rcx			; eax = lapic timer ticks
+	cmp	rax, 0x3fff'ffff		;	must not exceed 0xffff'ffff
+	ja	k64err
+	reg	rax, 101f
 
+;------------------------------------------------
+@@:
+	call	noThreadSw
+	cmp	[timers_local + TIMERS.1stFree], -1
+	jnz	@f
+
+	push	rax r8 r9 r12 r13 r14
+
+	call	resumeThreadSw
+	call	timer_memAlloc
+
+	pop	r14 r13 r12 r9 r8 rax
+
+	jmp	@b
+@@:
+;------------------------------------------------
+
+	xor	ecx, ecx
+	bt	dword [lapicT_flags], 1
+	mov	r8d, [lapicT_time]
+	setc	cl
+	add	r8, rax 			; += current time
+	jnc	@f
+
+	; switch timer list if overflow (counter for new add_list must be 0)
+	jmp k64err
+
+@@:
 	push	r8
-	or	r8, rcx 		; bit63
 	lea	rbp, [timers_local]
 	call	timer_insert
-	pop	rbx
-
-	mov	ecx, [lapicT_ms]
-	mov	esi, [lapicT_us]
-	mov	eax, ebx		; eax = microseconds
-	shr	rbx, 32 		; ebx = milliseconds
-	xor	ebp, ebp
-	imul	rax, rsi
-	not	ebp
-	imul	rbx, rcx
-
-	; both rax & rbx must be a 32bit value to fit into lapic timer
-	cmp	rax, rbp
-	ja	k64err
-	cmp	rbx, rbp
-	ja	k64err
-	add	eax, ebx		; EAX = number of lapic timer ticks
-	jc	k64err
-	reg	rax, 803
-
-	; if noThreadSw is active then nothing else can change variables bellow
-	;----------------------------------------------------------------------
+	pop	rax
 
 	bts	qword [k64_flags], 0	; if lapic timer active & counting (threads or timers or ...)
 	jc	.reduce_task_time	; then we consider reducing time of currently running task
 
-	or	byte [lapicT_flags], 1 shl 4		; we will entered lapicT handler due to timer
 	mov	dword [lapicT_time], 0
+	;sub eax, 0x20
 	mov	[qword lapic + LAPICT_INIT], eax	; start lapic timer
 	jmp	.ok
 
@@ -203,26 +130,69 @@ timer_in:
 	stc
 	jmp	.exit
 
+;===================================================================================================
+;   timer_memAlloc
+;===================================================================================================
 
-; timer_in:
-;
-; even with 2 timer lists we won't be able to add timers eventually, and we'll have to
-; put threads that add timers to sleep temporarily or we can let threads run and put "thread adding"
-; operation on a quene
-; !!! But we have very small timeout of 1second for "timer"in" function which is 0xF4240 microseconds
-;     so, we should be able to finish timers on one list and switch to another
-;
-;		    but this depends how soon callers timer handler function is exited
-;
-;			 So, no periodic timers provided by the kernel, the act of adding
-;			 another timer is when callers timer handler function can be interrupted
-;
-;  Still thread can have many timers that are added outside callers timer handler function.
-;  These many timers limited by kernel timers counter.
+	align 8
+timer_memAlloc:
 
+	push	r8 r9 r12 r13 r14
+
+	mov	rax, [rbp + TIMERS.ptr] 	; could be 0, ok
+	mov	r9d, [rbp + TIMERS.blockSz]
+	mov	r8, rax
+	mov	ecx, r9d
+	add	r9d, 16384
+	shr	r8, 14
+	shr	r9d, 14
+
+	mov	rax, 0xa00000/16384
+	mov	r9, 0x200000/16384
+	mov	r8, rax
+	shl	rax, 14
+	mov	r12d, PG_P + PG_RW + PG_ALLOC
+	call	alloc_linAddr
+	jc	k64err.allocLinAddr		; need realloc without freeing already allocated mem
+
+	pop	r14 r13 r12 r9 r8
+
+	call	noThreadSw
+
+	; TODO:
+	; by this time "1stFree" might be different (!= -1)
+	; different thread migh've used timer_in, so "1stFree" and timer list is totally unpredicatable
+
+	; basically code bellow waiting for proper malloc & realloc fnctions
+
+	mov	qword [timers_local + TIMERS.ptr], rax		; rax
+	mov	dword [timers_local + TIMERS.blockSz], 16384	; ecx
+	mov	dword [timers_local + TIMERS.1stFree], 0
+	mov	dword [timers_local + TIMERS.cnt], 0
+	mov	dword [timers_local + TIMERS.cnt2], 0
+	; ? 2 heads
+	; ? 2 counters
+
+	; setup free entries:
+
+	mov	esi, 16384/sizeof.TIMER - 1
+	mov	ecx, 1
+@@:
+	mov	[rax + TIMER.data2], rcx		; temp next free entry
+	add	rax, sizeof.TIMER
+	add	ecx, 1
+	sub	esi, 1
+	jnz	@b
+	xor	ecx, ecx
+	not	rcx
+	mov	[rax + TIMER.data2], rcx
+
+	call   resumeThreadSw
+
+	ret
 
 ;===================================================================================================
-; timer_insert
+;   timer_insert
 ;===================================================================================================
 ; input:  r8
 ;
@@ -317,6 +287,9 @@ timer_remove:
 
 ;macro asdP{
 timer_list:
+	pushf
+	push	rax rcx rdx rsi rbp r8 r9
+	lea	rbp, [timers_local]
 	mov	ecx, [rbp + TIMERS.cnt]
 	mov	rsi, [rbp + TIMERS.ptr]
 	mov	eax, [rbp + TIMERS.head]
@@ -335,6 +308,8 @@ timer_list:
 	reg	r9, 80a
 	movzx	eax, r9w
 	jmp	@b
-	ret
 @@:
-;}
+	pop	r9 r8 rbp rsi rdx rcx rax
+	popf
+	ret
+

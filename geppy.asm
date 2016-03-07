@@ -1,5 +1,5 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
@@ -104,7 +104,7 @@ ioapic_inputCnt = data1 + 2384	; 4bytes = 1byte (for each ioapic) * 4
 				; if 0 - corresponding ioapic doesn't exist (after 'parse_MADT runs')
 
 calcTimerSpeed	= data1 + 2388	; runs on one cpu at a time
-_?		= data1 + 2408
+_?		= data1 + 2408 ;2440
 
 ;---------------------------------------------------------------------------------------------------
 ; don't change order of variables in the "lock" sections bellow
@@ -115,6 +115,9 @@ memTotal	= locks + 136
 memLock 	= locks + 140
 
 gTimers 	= locks + 256
+
+gThreadIDs	= locks + 512	; 32bytes = 256bits
+gThreadIDs_lock = locks + 544
 
 ; 20byte device entry (for PCI & ISA busses)
 ;-----------------------------------
@@ -140,22 +143,30 @@ gTimers 	= locks + 256
 ;			 per CPU private data
 ;===================================================================================================
 
-
 idt		equ	r15
 
 ;---------------------------------------------------------------------------------------------------
 
 lapicT_stack	equ	r15+(4096+512)
 
-lapicT_flags	equ	r15+((4096+512)-168)	; bit 0  =1 if 2nd timer list is used to remove entries
-						;				  inside lapicT handler
-						; bit 1  =1 if 2nd timer list is used to add entries
-						;			     inside "timer_in" function
+lapicT_overhead equ	r15+((4096+512)-150)	; 4b, time it takes to execute the handler
+lapicT_currTID	equ	r15+((4096+512)-152)	; ID of most recent thread that was or is running
+						; Thread could be asleep with no other threads active
+lapicT_kPML4	equ	r15+((4096+512)-160)
+
+lapicT_time	equ	r15+((4096+512)-168)	; Single timer timeout must be a value that fits fully
+						; into this variable (smaller than unsigned dword).
+						; Microsecond units. ? LAPICT_INIT varies depending on CPU
+
+lapicT_flags	equ	r15+((4096+512)-172)	; bit 0  remove_list id (set after we remove smth and
+						;			there is still something left)
+						; bit 1  "lapicT_time" ID. Changes when "lapicT_time"
+						;	     overflows. Is used to add timer entries.
 						; bit 2  =1 if no thread switch requested
 						; bit 3  =1 if lapicT entered handler with bit2 set
-						; bit 4  =1 if we entered the handler due to timer
-lapicT_time	equ	r15+((4096+512)-172)
-lapicT_pri3	equ	r15+((4096+512)-174)
+						; bit 4  =1 if we did switch ID of the add_list
+
+lapicT_pri3	equ	r15+((4096+512)-174)	; "head" index of the threads ready to run
 lapicT_pri2	equ	r15+((4096+512)-176)
 lapicT_pri1	equ	r15+((4096+512)-178)
 lapicT_pri0	equ	r15+((4096+512)-180)
@@ -164,8 +175,11 @@ rtc_cpuID	equ	r15+((4096+512)-185)	; 1b, RTC attached to this CPU id
 rtc_job 	equ	r15+((4096+512)-186)	; 1b
 lapicT_r15	equ	r15+((4096+512)-192)	; 6bytes, value of R15 in 64KB units
 
-sp_lapicT_flags    equ	   rsp+24
-sp_lapicT_time	   equ	   rsp+20
+sp_lapicT_overhead equ	   rsp+42
+sp_lapicT_currTID  equ	   rsp+40
+sp_lapicT_kPML4    equ	   rsp+32
+sp_lapicT_time	   equ	   rsp+24
+sp_lapicT_flags    equ	   rsp+20
 sp_lapicT_pri3	   equ	   rsp+18
 sp_lapicT_pri2	   equ	   rsp+16
 sp_lapicT_pri1	   equ	   rsp+14
@@ -219,36 +233,41 @@ interrupt_stack equ	r15+(4096+3072)
 
 paging_ram	equ	r15+(8*1024)		; 4KB
 
-;tmpTimers	 equ	 r15+(12*1024)
-;tmpEvents	 equ	 r15+(13*1024)
+idtr		equ	r15+(12*1024)		; umm, never really used
+pgRam4_size	equ	r15+(12*1024+12)
+lapicT_ms	equ	r15+(12*1024+16)	; 4b, # of lapic timer ticks per millisecond
+lapicT_ms_fract equ	r15+(12*1024+20)	; 4b,			       for the divider of 2
+lapicT_us	equ	r15+(12*1024+24)	; 4b, each microsecond
+lapicT_us_fract equ	r15+(12*1024+28)	; 4b
+process_ptr	equ	r15+(12*1024+40)
+process_cnt	equ	r15+(12*1024+48)
+process_lock	equ	r15+(12*1024+52)
+_?		equ	r15+(12*1024+56)	; 4b
+_?		equ	r15+(12*1024+60)
+kernelPanic	equ	r15+(12*1024+64)	; 8b
+timers1 	equ	r15+(12*1024+72)	;
+timers_local	equ	r15+(12*1024+72)	;
+_?		equ	r15+(12*1024+100)
+timers_head	equ	r15+(12*1024+104)	; 2 2byte vars
+timers_cnt	equ	r15+(12*1024+108)	; 2 2byte vars
+k64_flags	equ	r15+(12*1024+112)	; bit0 =1 if lapicT is active (can't put CPU to sleep)
+feature_XD	equ	r15+(12*1024+120)
+tss_data	equ	r15+(12*1024+128)	; TSS is closer to threads, same 4KB (2176=2048+128)
 
-;------------------- 1.0KB for frequently used data ------- same 4KB as some other data ------------
 
-idtr		equ	r15+((15*1024)) 	; umm, never really used
-pgRam4_size	equ	r15+((15*1024)+12)
-lapicT_ms	equ	r15+((15*1024)+16)	; 4b, # of lapic timer ticks per millisecond
-lapicT_ms_fract equ	r15+((15*1024)+20)	; 4b,			       for the divider of 2
-lapicT_us	equ	r15+((15*1024)+24)	; 4b, each microsecond
-lapicT_us_fract equ	r15+((15*1024)+28)	; 4b
-process_ptr	equ	r15+((15*1024)+40)
-process_cnt	equ	r15+((15*1024)+48)
-process_lock	equ	r15+((15*1024)+52)
-currentPID	equ	r15+((15*1024)+56)	; 4b
-_?		equ	r15+((15*1024)+60)
-kernelPanic	equ	r15+((15*1024)+64)	; 8b
-timers1 	equ	r15+((15*1024)+72)	;
-timers_local	equ	r15+((15*1024)+72)	;
-_?		equ	r15+((15*1024)+100)
-timers_head	equ	r15+((15*1024)+104)	; 2 2byte vars
-timers_cnt	equ	r15+((15*1024)+108)	; 2 2byte vars
-k64_flags	equ	r15+((15*1024)+112)	; bit0 =1 if lapicT is active (can't put CPU to sleep)
-_?		equ	r15+((15*1024)+120)
+errF		equ	r15+(12*1024+384)	; increment index at the beginning of the function, store func id, dec at the end
+						; function call trace
+_?		equ	r15+(12*1024+388)
 
-tss_data	equ	r15+(16*1024-2176)	; TSS is closer to threads, same 4KB (2176=2048+128)
-process 	equ	r15+(16*1024-2048)	; 16KB (initial processes use same 4KB as other data)
+threads 	equ	r15+(13*1024)		; 3KB, its an array, thread id = index of thread entry
+
+pgRam4		equ	r15+(16*1024)
+
+kStack		equ	r15+(28*1024)		; 8KB ( 4KB at 20*1024, 4KB at 24*1024 )
+
+registers	equ	r15+(28*1024)		; 4KB
+
 PF_ram		equ	r15+(32*1024)		; 32KB
-pgRam4		equ	r15+(64*1024)		; 4KB
-kStack		equ	r15+(128*1024)		; 64KB
 
 ;===================================================================================================
 
@@ -264,8 +283,12 @@ kStack		equ	r15+(128*1024)		; 64KB
 	include 'devices_ints.asm'
 	include 'pci.asm'
 	include 'timers_alerts.asm'
+	include 'files.asm'
 
 	include 'bigDump/numbers.asm'
+
+	include 'thread1.asm'
+	include 'thread2.asm'
 
 ;===================================================================================================
 ;    read-only data for 64bit long mode

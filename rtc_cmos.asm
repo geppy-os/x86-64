@@ -1,5 +1,5 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
@@ -8,7 +8,7 @@ init_ps2Mouse:
     align 8
 rtc_int:
 	push	r15 r8 rax rcx rsi rdi
-	sub	rsp, 104
+	sub	rsp, 104			; 96bytes available since we have a "call" in here
 
 	mov	eax, 0xc
 	out	0x70, al
@@ -99,8 +99,10 @@ rtc_init:
 	mov	byte [rtc_job], 0x7f
 	or	dword [qword lapic + LAPICT], 1 shl 16	; mask timer
 
+	push	rax
 	mov	r8d, 0111b	; 512 times a second  (once per 1.953125 ms)
 	call	rtc_setRate
+	pop	rax
 
 	mov	eax, 0xc
 	out	0x70, al
@@ -116,10 +118,9 @@ rtc_init:
 
 ;===================================================================================================
 ; input: r8 = 4bit rate
-
+;	 this function must not use stack
     align 8
 rtc_setRate:
-	push	rax rcx
 	cmp	r8, 2
 	jb	k64err
 	and	r8d, 15
@@ -133,7 +134,6 @@ rtc_setRate:
 	out	0x70, al
 	mov	eax, ecx
 	out	0x71, al
-	pop	rcx rax
 	ret
 
 ;value	times per second

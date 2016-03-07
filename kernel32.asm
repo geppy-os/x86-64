@@ -13,12 +13,18 @@ PMode:
 	mov	fs, ax
 	mov	gs, ax
 
+	mov	eax, 0x80000000
+	cpuid
+	cmp	eax, 0x80000008
+	jb	k32err.no_longMode
+
 	mov	eax, cr0
 	;		   CD		 NW	 AM(align off)	EM(run MMX)
 	and	eax, not((1 shl 30) + (1 shl 29) + (1 shl 18) + (1 shl 2))
 	mov	cr0, eax
 	mov	eax, cr4
-	or	eax, 1 shl 9  ;sse
+	;	       sse	 xsave
+	or	eax, 1 shl 9 ;+ 1 shl 18
 	mov	cr4, eax
 
 ;============================================================================ Find ACPI RSDT =======
@@ -654,8 +660,8 @@ macro ___debug_showMem2{
 	mov	[edi + 0x1fe * 8], ebx		 ;	      3
 	mov	[edi + 0x1ff * 8], ebp		 ; locks
 
-;================================================================= per CPU 128KB of linear space ===
-; 1st cpu starts at 4MB
+;================================================================= per CPU 64KB of linear space ====
+; 1st cpu starts at 4MB, look in 'geepy.asm' for names in comments
 
 	shl	dword [esp], 14
 	call	zeroMem32
@@ -673,29 +679,20 @@ macro ___debug_showMem2{
 	sub	esi, 3
 	mov	[esi], eax			 ; idt
 	mov	[esi + 8], ebx			 ; stack for some exceptions
-	mov	[esi + 24], ebp 		 ; some data (same 4KB as few initial thread entries)
-
-	; 2KB already allocated for threads
-	; TODO: remaining mem needs to maked as 'alloc on demand'
-
-
-	; per CPU kernel stack
-	;------------------------------------------
+	;mov	 [esi + 16]			 ; reserved for "paging_ram"
+	mov	[esi + 24], ebp 		 ; some data and "threads"
 
 	add	edi, 3
 	lea	eax, [edi + 4096]
 	lea	ebx, [edi + 4096*2]
 	lea	ebp, [edi + 4096*3]
-	mov	[esi + 28*8], edi
-	mov	[esi + 29*8], eax
-	mov	[esi + 30*8], ebx
-	mov	[esi + 31*8], ebp
-
-	; remaining stack marked as "to be allocated when accessed"
-	;
-	; ....
+	;mov	 [esi + 32], edi		; reserved for "pgRam4"
+	mov	[esi + 40], eax 		; kStack
+	mov	[esi + 48], ebx 		; kStack
+	mov	[esi + 56], ebp 		; registers
 
 
+;===================================================================================================
 
 	mov	eax, cr4
 	or	eax, 1 shl 5		; PAE
@@ -708,7 +705,7 @@ macro ___debug_showMem2{
 	or	eax, 1 shl 31
 	mov	cr0, eax		; enable paging
 
-	jmp	0x18:0x200000
+	jmp	0x18:0x200000		; jmp 0x18:LMode
 
 	; execution continues to file "kernel64.asm" at "LMode" label
 
@@ -724,17 +721,38 @@ k32err:
 	hlt
 	jmp	k32err
 
+.no_xsave:
+	jmp	@f
+.no_osxsave:
+	jmp	@f
+.no_ssse3:
+	jmp	@f
+.no_longMode:
+@@:
+	cld
+	mov	edi, 0xb8000
+	mov	esi, .minCpuFeatures
+	mov	ecx, .minCpuFeatures_len/2
+	rep	movsw
+	hlt
+	jmp	@b
+
+.minCpuFeatures: db "G e p p y :     M i n   C P U   f e a t u r e s   a r e   n o t   m e t ! "
+.minCpuFeatures_len = $-.minCpuFeatures
+
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
-  align 4
+
+	align 4
 zeroMem32:
 	pushf
 	push	edi ecx
 	pxor	xmm0, xmm0
 	mov	edi, [esp + 16]
 	mov	ecx, 16384/128
-  align 4
+
+	align 4
 @@:
 	movdqa	[edi], xmm0
 	movdqa	[edi + 16], xmm0
@@ -747,6 +765,7 @@ zeroMem32:
 	add	edi, 128
 	dec	ecx
 	jnz	@b
+
 	pop	ecx edi
 	popf
 	ret
