@@ -1,5 +1,5 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
@@ -252,8 +252,12 @@ PMode:
 .ACPI_done:
 
 ;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
 
 macro ___debug_showMem1{
+	pusha
+	pushf
 	movzx	ebp, byte [memMap_cnt + rmData]
 	mov	esi, memMap + rmData
 @@:
@@ -279,14 +283,46 @@ macro ___debug_showMem1{
 	jmp	@b
 @@:
 	add	[reg32.cursor], 8
+	popf
+	popa
 }
-;============================================================= sort starting mem addresses =========
+
+macro ___debug_showMem2{
+	pusha
+	pushf
+	movzx	ebp, byte [memMap_cnt + rmData]
+	mov	esi, memMap + rmData
+@@:
+	sub	ebp, 1
+	jc	@f
+	mov	eax, [esi]
+	mov	edx, [esi+8]
+	add	esi, 16
+
+	cmp	byte [esi-16+7], 1
+	jnz	@b
+
+	;bswap	 ecx
+	;reg	 ecx, 214
+	reg	eax, 814
+	reg	edx, 814
+	add	[reg32.cursor], 2
+	jmp	@b
+@@:
+	add	[reg32.cursor], 6
+	popf
+	popa
+}
+
+;===================================================================================================
+;   sort starting mem addresses     ////////////////////////////////////////////////////////////////
+;===================================================================================================
 
 	movzx	ebp, byte [memMap_cnt + rmData]
 	mov	esi, memMap + rmData
 	xor	edi, edi
 	sub	ebp, 1
-	jc	k32err
+	jc	k32err.1
 	jz	.sort_done
 	movd	mm7, ebp
 
@@ -321,36 +357,14 @@ macro ___debug_showMem1{
 	xor	edi, edi
 	jmp	.sort_startMemAddr
 .sort_done:
+	;___debug_showMem2
 	;___debug_showMem1
+
 
 	; TODO: check so that one mem entry doesn't overlap with the other mem entry
 
 	; TODO: disable 1st MB of RAM
 
-;===================================================================================================
-
-macro ___debug_showMem2{
-	movzx	ebp, byte [memMap_cnt + rmData]
-	mov	esi, memMap + rmData
-@@:
-	sub	ebp, 1
-	jc	@f
-	mov	eax, [esi]
-	mov	edx, [esi+8]
-	add	esi, 16
-
-	cmp	byte [esi-16+7], 1
-	jnz	@b
-
-	;bswap	 ecx
-	;reg	 ecx, 214
-	reg	eax, 814
-	reg	edx, 814
-	add	[reg32.cursor], 2
-	jmp	@b
-@@:
-	add	[reg32.cursor], 6
-}
 ;===================================================================================================
 ;  Round starting mem addrs and sizes to 16KB, ranges that are above 64TB are labled invalid =0xff
 ;  Truncate sizes so that range+size doesn't overlap over 64TB
@@ -361,7 +375,7 @@ macro ___debug_showMem2{
 	movzx	ebp, byte [memMap_cnt + rmData]
 	mov	esi, memMap + rmData
 	cmp	ebp, 1
-	jl	k32err
+	jl	k32err.2
 
 	movq	xmm2, [_pmode_noMemType]
 	movq	xmm3, [_pmode_almost16kb]
@@ -410,6 +424,7 @@ macro ___debug_showMem2{
 
 .round_done:
 	;___debug_showMem2
+	;___debug_showMem1
 
 ;=============================================== split memory into entries bellow 4GB and above ====
 
@@ -417,7 +432,7 @@ macro ___debug_showMem2{
 
 	movzx	ebp, byte [memMap_cnt + rmData]
 	cmp	ebp, 1
-	jb	k32err
+	jb	k32err.3
 	mov	esi, memMap + rmData
 	mov	edx, 1
 
@@ -430,14 +445,14 @@ macro ___debug_showMem2{
 	mov	ebx, eax
 	mov	edi, 0x10000
 	add	ebx, ecx
-	jc	k32err				; little sanity check
+	jc	k32err.4			; little sanity check
 	cmp	eax, edi
 	jae	@f
 	cmp	ebx, edi
 	jbe	@f
 
 	sub	edx, 1				; only one entry that splits 4GB region can exist
-	jnz	k32err
+	jnz	k32err.5
 
 	sub	edi, eax			; size for current entry
 	sub	ecx, edi			; size for new entry
@@ -464,10 +479,12 @@ macro ___debug_showMem2{
 
 ;=================================================== alloc 2MB bellow 4GB for the kernel code ======
 
+	; go thru entries starting with last (highest mem addr)
+
 .alloc2_2mb:
 	movzx	ebp, byte [memMap_cnt + rmData]
 	sub	ebp, 1
-	jc	k32err
+	jc	k32err.6
 	shl	ebp, 4
 	lea	esi, [memMap + rmData  + ebp]	; alloc highest physical RAM bellow 4GB
 
@@ -476,62 +493,77 @@ macro ___debug_showMem2{
 	mov	ecx, [esi + 8]
 	cmp	byte [esi + 7], 1		; useable RAM only
 	jnz	.alloc2_next
-	cmp	ecx, 0x100			; min 4MB size
+	cmp	ecx, 0x100			; min 4MB size (we may split it into 2MB and leftover)
 	jb	.alloc2_next
-	cmp	eax, 0xfe00
+	cmp	eax, 0x3fe00			; bellow ~4gb for the starting addr
 	ja	.alloc2_next
 
-	lea	ebx, [eax + ecx]
+	lea	ebx, [eax + ecx]		; addr + size
 	mov	edx, ebx
-	test	ebx, 0x7f
-	jz	.alloc2
+	test	ebx, 0x7f			;	is it multiple of 2MB
+	jz	.alloc2 			;	if multiple then we chop off 2MB from end addr
 
 	; create new memory entry
+	;----------------------------------------------
+
 	and	ebx, not 0x7f			; address for new entry   EBX
-	sub	edx, ebx			; size for new entry
+	sub	edx, ebx			; end addr - multiple of 2MB addr = size for new entry
 	movzx	edi, byte [memMap_cnt + rmData]
+
 	cmp	edi, 63
-	jae	@f
+	jae	@f				; don't create new entry if can't (some mem is lost)
+
 	shl	edi, 4
 	mov	dword [memMap + rmData	+ edi], ebx
 	mov	dword [memMap + rmData	+ edi+4], 1 shl 24
 	mov	dword [memMap + rmData	+ edi+8], edx
 	mov	dword [memMap + rmData	+ edi+12], 0
 	add	byte [memMap_cnt + rmData], 1
+
+	reg	ebx, 80a
+	reg	edx, 80a
+
+	reg	eax, 80a
+	reg	ecx, 80a
+
 @@:
 	sub	ecx, edx
-	jbe	k32err
+	jbe	k32err.7
 	mov	[esi + 8], ecx
 
 	; alloc the 2MB
+	;----------------------------------------------
 .alloc2:
-	sub	ebx, 0x80
-	cmp	ebx, 0xfe00			; 2MB must start bellow 4GB
-	ja	.alloc2_next
+	add	eax, ecx
+	test	eax, 0x7f
+	jnz	k32err.c			; end addr must be multiple of 2MB
 
-	movd	xmm7, ebx			; XMM7
+	cmp	ecx, 0x80			; size must be min 2MB
+	jb	k32err.d
+
+	sub	ebx, 0x80			; new entry start addr -= 2MB
+	sub	eax, 0x80			; old entry  end  addr -= 2MB
+	cmp	ebx, eax
+	jnz	k32err.e
+
 	sub	ecx, 0x80
 	mov	[esi + 8], ecx
-	jc	k32err
-	jz	.alloc2_invalid
-	cmp	ebx, eax
-	jbe	k32err
-	jmp	.alloc2_done
-
-.alloc2_invalid:
+	jnz	.alloc2_done
 	mov	byte [esi + 7], 255
 	jmp	.alloc2_done
+
 .alloc2_next:
 	sub	esi, 16
 	sub	ebp, 16
 	jnc	.alloc_2mb
-	jmp	k32err
+	jmp	k32err.9
 
 .alloc2_done:
-	;___debug_showMem2
-	;___debug_showMem1
+	movd	xmm7, eax			;					XMM7
+	cmp	eax, 0x40000			; 2MB must start bellow 4GB
+	jae	k32err.f
 
-	push	0x200000 ebx			; size & addr
+	push	0x200000 eax			; size & addr
 	call	memTest32
 	jnz	.alloc2_2mb
 
@@ -548,7 +580,7 @@ macro ___debug_showMem2{
 	cmp	edx, .16kb_cnt
 	jz	.alloc16_done
 	cmp	ebp, 0
-	jle	k32err
+	jle	k32err.a
 
 	mov	eax, [esi]
 	mov	ecx, [esi + 8]
@@ -566,7 +598,7 @@ macro ___debug_showMem2{
 	add	edx, 1
 @@:
 	sub	ecx, 1
-	jc	k32err
+	jc	k32err.b
 	mov	[esi + 8], ecx
 	jnz	.alloc16
 
@@ -661,7 +693,7 @@ macro ___debug_showMem2{
 	mov	[edi + 0x1ff * 8], ebp		 ; locks
 
 ;================================================================= per CPU 64KB of linear space ====
-; 1st cpu starts at 4MB, look in 'geepy.asm' for names in comments
+; 1st cpu starts at 4MB, look in 'geppy.asm' for names in comments
 
 	shl	dword [esp], 14
 	call	zeroMem32
@@ -713,14 +745,56 @@ macro ___debug_showMem2{
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
+
 k32err:
+.offset = .k32err_len+2
+
 	mov	dword [0xb8000+48], 0x02040204
 	mov	dword [0xb8000+52], 0x04040404
-
-
 	hlt
 	jmp	k32err
-
+.1:
+	mov	dword [0xb8000+.offset], 0x04310430
+	jmp	@f
+.2:	mov	dword [0xb8000+.offset], 0x04320430
+	jmp	@f
+.3:	mov	dword [0xb8000+.offset], 0x04330430
+	jmp	@f
+.4:	mov	dword [0xb8000+.offset], 0x04340430
+	jmp	@f
+.5:	mov	dword [0xb8000+.offset], 0x04350430
+	jmp	@f
+.6:	mov	dword [0xb8000+.offset], 0x04360430
+	jmp	@f
+.7:	mov	dword [0xb8000+.offset], 0x04370430
+	jmp	@f
+.8:	mov	dword [0xb8000+.offset], 0x04380430
+	jmp	@f
+.9:	mov	dword [0xb8000+.offset], 0x04390430
+	jmp	@f
+.a:	mov	dword [0xb8000+.offset], (4 shl 24) + ('a' shl 16) + (4 shl 8) + '0'
+	jmp	@f
+.b:	mov	dword [0xb8000+.offset], (4 shl 24) + ('b' shl 16) + (4 shl 8) + '0'
+	jmp	@f
+.c:	mov	dword [0xb8000+.offset], (4 shl 24) + ('c' shl 16) + (4 shl 8) + '0'
+	jmp	@f
+;-------
+.d:	mov	dword [0xb8000+.offset], (4 shl 24) + ('d' shl 16) + (4 shl 8) + '0'
+	jmp	@f
+.e:	mov	dword [0xb8000+.offset], (4 shl 24) + ('e' shl 16) + (4 shl 8) + '0'
+	jmp	@f
+.f:	mov	dword [0xb8000+.offset], (4 shl 24) + ('f' shl 16) + (4 shl 8) + '0'
+	jmp	@f
+.10:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('0' shl 16)
+	jmp	@f
+.11:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('1' shl 16)
+	jmp	@f
+.12:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('2' shl 16)
+	jmp	@f
+@@:
+	mov	esi, .k32err
+	mov	ecx, .k32err_len/2
+	jmp	.display
 .no_xsave:
 	jmp	@f
 .no_osxsave:
@@ -729,14 +803,18 @@ k32err:
 	jmp	@f
 .no_longMode:
 @@:
-	cld
-	mov	edi, 0xb8000
 	mov	esi, .minCpuFeatures
 	mov	ecx, .minCpuFeatures_len/2
+.display:
+	cld
+	mov	edi, 0xb8000
 	rep	movsw
 	hlt
-	jmp	@b
+	jmp	$
 
+;---------------------------------------------------------------------------------------------------
+.k32err: db "G e p p y :   3 2 b i t   e r r o r : "
+.k32err_len = $-.k32err
 .minCpuFeatures: db "G e p p y :     M i n   C P U   f e a t u r e s   a r e   n o t   m e t ! "
 .minCpuFeatures_len = $-.minCpuFeatures
 

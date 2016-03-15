@@ -133,7 +133,7 @@ timer_in:
 	ret
 .err:
 	stc
-	jmp	@b
+	jmp	@b   ;next time I mess with timers is when I get kernel panic
 
 
 ;===================================================================================================

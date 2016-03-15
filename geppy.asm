@@ -13,6 +13,8 @@
 
 ; most variables(memory locations) are defined in this file
 ; most constants and offsets are in "const.inc"
+;
+; ALL "include"s ARE IN THIS FILE ONLY	 (like	 include 'kernel32.asm')
 
 
 

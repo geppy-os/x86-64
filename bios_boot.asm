@@ -1,5 +1,5 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
@@ -158,15 +158,16 @@ bios_boot:
 	in	al, 0x92
 	bts	ax, 1
 	jc	.a20_done
-	and	al, 0xFE
+	and	al, 0xfe
 	out	0x92, al
 
 .a20_done:
 	sti
 
-;=============================================================================== scan PCI bus ======
+;===================================================================================================
+; Quick PCI bus scan, will be used to determine if we need to mess with VBE or we have device driver
+;===================================================================================================
 
-;pci_initialScan
 
 ;===================================================================================================
 

@@ -66,8 +66,7 @@
 ;===================================================================================================
 ; Timers
 ;===================================================================================================
-; Why does user thread need a fast timer ? It doesn't ! Max granularity is 1 second, adjusted.
-; Actually, user thread doesn't need a timer at all.
+; Why does user thread need a fast timer ? It doesn't ! Min granularity is 1 second, to be adjusted.
 
 ; It needs screen refresh, 16 times a seconds = each 62.5   ms
 ;			   20			     50     ms
@@ -79,12 +78,6 @@
 
 ; with screen refresh, (game) logic will be updated as user sees results on screen and not at mad speeds
 ; As with everything else - its the events that trigger.
-
-; timers timeslice is minimum (maybe ? 2ms) regadles of thread priority
-; user threads are allowed to schedule timers in 1sec units only
-; we need to return some value when next timer can be scheduled
-;		in this case we don't need 1sec units at all or mandatory library
-;		best if user code knows that it wont get timer event sooner and adjust as sees fit
 
 
 
