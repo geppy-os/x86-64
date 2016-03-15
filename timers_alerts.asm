@@ -24,23 +24,23 @@ timer_at:
 ;===================================================================================================
 ;   timer_in	 alert in some time, for small delays only
 ;===================================================================================================
-; input: r8 - time in microseconds that is <= 1 second
+; input: r8  - time in microseconds  <= 1 second
 ;	 r9  - ptr to entry point,
-;	       OR 0 if suspend process and resume after timer fires (r12,r13,r14 ignored in this case)
+;	       OR 0 if suspend process and resume after timer fires (r12,r13 ignored in this case)
 ;	 r12 - any user data #1
 ;	 r13 - any user data #2
-;	 r14   != 0 if periodic
 
 	align 8
 timer_in:
 	push	rax rdx rcx rsi rdi rbp rbx
-	sub	rsp, 8
-	cmp	r8, 0
-	jle	.err
-	cmp	r8, 1000*1000
+	cmp	r8, 10				; min 10us
+	jb	.err
+	cmp	r8, 1000*1000			; max 1s
 	ja	.err
 
-	; convert to milliseconds + microseconds frist, then to lapic timer ticks
+	; convert to milliseconds + microseconds first, then to lapic timer ticks
+	; not sure how accurate lapic_timer ticks per microsecond are
+	; The milliseconds simply reduces rounding errors.
 	mov	esi, 1000
 	xor	eax, eax
 	xor	edx, edx
@@ -52,83 +52,184 @@ timer_in:
 	imul	rax, rdi
 	imul	rcx, rsi
 	add	rax, rcx			; eax = lapic timer ticks
-	cmp	rax, 0x3fff'ffff		;	must not exceed 0xffff'ffff
-	ja	k64err
-	reg	rax, 101f
+	cmp	rax, 0x6fff'ffff		;	must not exceed 0x6fff'ffff
+	ja	k64err.timerIn_manyLapTicks
 
-;------------------------------------------------
+	;-------------------------------------------------------------------------------------
 @@:
 	call	noThreadSw
 	cmp	[timers_local + TIMERS.1stFree], -1
 	jnz	@f
 
+	call	resumeThreadSw
+
 	push	rax r8 r9 r12 r13 r14
 
-	call	resumeThreadSw
 	call	timer_memAlloc
 
 	pop	r14 r13 r12 r9 r8 rax
 
 	jmp	@b
 @@:
-;------------------------------------------------
+	;-------------------------------------------------------------------------------------
+	push	rax
 
-	xor	ecx, ecx
-	bt	dword [lapicT_flags], 1
+	xor	r14, r14
+	bt	dword [lapicT_flags], 1      ; counter 0 ??? on new list
 	mov	r8d, [lapicT_time]
-	setc	cl
-	add	r8, rax 			; += current time
+	setc	r14b
+	add	r8d, eax			; += current time
 	jnc	@f
 
 	; switch timer list if overflow (counter for new add_list must be 0)
-	jmp k64err
-
+	mov	rax, [timers_local + TIMERS.ptr]
+	xor	r14, 1
+	xor	dword [lapicT_flags], 10b
+	cmp	[timers_local + TIMERS.cnt + r14*8], 0
+	jnz	k64err.timerIn_timerCntNot0
 @@:
 	push	r8
 	lea	rbp, [timers_local]
 	call	timer_insert
-	pop	rax
+	pop	rax				; time-at (adjusted to current local time)   rax
+	pop	r8				; time-in (original input in lapicT ticks)	r8
 
-	bts	qword [k64_flags], 0	; if lapic timer active & counting (threads or timers or ...)
-	jc	.reduce_task_time	; then we consider reducing time of currently running task
+	;-------------------------------------------------------------------------------------------
+	; we are running on behalf of some thread and we are adding timer for the same thread
+	; we can simply put a new value into LAPICT_INIT after updating lapicT_time
+	; if noThreadSw is active then none of the vars are changed except bit3 in lapicT_flags
+	;-------------------------------------------------------------------------------------------
 
-	mov	dword [lapicT_time], 0
-	;sub eax, 0x20
-	mov	[qword lapic + LAPICT_INIT], eax	; start lapic timer
-	jmp	.ok
+	cmp	r8d, [qword lapic + LAPICT_CURRENT]
+	jae	.ok					; need >= left, lapicT handler handles timeouts
 
-	;----------------------------------
-.reduce_task_time:
-	; if LAPICT_CURRENT above certain value then we consider reducing time of currently running task
-	; if bellow then we let lapicT fire on its own
-	; if =0 then resumeThreadSw will get us into the handler
+	or	dword [qword lapic + LAPICT], 1 shl 16	; mask timer, won't let it fire
+	mfence
+	bt	dword [lapicT_flags], 3
+	jc	.ok					; jump if managed to fire before we masked it
 
+	mov	edi, [qword lapic + LAPICT_INIT]
+	sub	edi, [qword lapic + LAPICT_CURRENT]
+	add	[lapicT_time], edi
+	jnc	@f
 
-	;actually,  need to get a lock for this:
-	; 1)
-	; if LAPICT_CURRENT > some_value
-	; then
-	;    do
-	; else
-	;    goto 2)
-	;
-	; if LAPICT_CURRENT   still >	some_value
-	; then
-	;    goto 2)
-	; else
-	;    goto 1)
-	;
-	; 2)
+	; shall we remove potential timers ?? hmm ? can they exist on new add_list id that we switched?
 
-.ok:	clc
-.exit:
-	call	resumeThreadSw
-	add	rsp, 8
+	xor	ecx, ecx
+	btc	dword [lapicT_flags], 1
+	setnc	cl
+	cmp	[timers_local + TIMERS.cnt + rcx*8], 0
+	jnz	k64err.timerIn_timerCntNot0_1
+@@:
+	mov	dword [qword lapic + LAPICT_INIT], -1		; very large value for timer
+	and	dword [qword lapic + LAPICT], not (1 shl 16)	; unmask timer = generate interrupt
+	mov	dword [qword lapic + LAPICT_INIT],r8d		; reasonable value for timer
+
+	;-------------------------------------------------------------------------------------------
+.ok:	and	dword [qword lapic + LAPICT], not (1 shl 16)
+	clc
+@@:	call	resumeThreadSw
 	pop	rbx rbp rdi rsi rcx rdx rax
 	ret
 .err:
 	stc
-	jmp	.exit
+	jmp	@b
+
+
+;===================================================================================================
+;   timer_insert
+;===================================================================================================
+; input:  r8
+;
+; assume that all registers modified
+
+
+	 align 8
+timer_insert:
+	cmp	dword [rbp + TIMERS.cnt + r14*8], 0
+	jz	.1st_entry
+
+	mov	eax, [rbp + TIMERS.1stFree]
+	mov	ecx, [rbp + TIMERS.head + r14*8]
+	mov	r10d, eax
+	mov	ebx, ecx
+	imul	eax, sizeof.TIMER
+	imul	ecx, sizeof.TIMER
+	mov	rdi, [rbp + TIMERS.ptr]
+	mov	edx, [rbp + TIMERS.cnt + r14*8]
+
+	mov	esi, dword [rdi + rax + TIMER.data2]	; get next free entry
+	mov	r11w, [lapicT_currTID]
+
+	mov	[rdi + rax + TIMER.returnPtr], r9
+	mov	[rdi + rax + TIMER.data1], r12
+	mov	[rdi + rax + TIMER.data2], r13
+	mov	[rdi + rax + TIMER.wakeUpAt], r8
+	mov	[rdi + rax + TIMER.gTID], r11w
+
+	mov	[rbp + TIMERS.1stFree], esi
+
+@@:	; start search from the "head" at RCX offset
+	cmp	[rdi + rcx + TIMER.wakeUpAt], r8
+	jae	@f
+	movzx	ecx, [rdi + rcx + TIMER.next]
+	imul	ecx, sizeof.TIMER
+	sub	edx, 1
+	jnz	@b
+@@:
+	; change "head" if needed
+	cmp	[rbp + TIMERS.cnt + r14*8], edx 	; counter is modified later on
+	jnz	@f
+	mov	[rbp + TIMERS.head + r14*8], r10d
+@@:
+	; get and update "next" & "prev" of the current entry
+	movzx	r8d, [rdi + rcx + TIMER.prev]
+	mov	r9d, r8d				; r9 prev
+	imul	r8d, sizeof.TIMER
+	add	dword [rbp + TIMERS.cnt + r14*8], 1
+	movzx	r12d, [rdi + r8 + TIMER.next]		; r12 next
+	mov	[rdi + rax + TIMER.prev], r9w
+	mov	[rdi + rax + TIMER.next], r12w
+
+	; update previous and next entries
+	mov	[rdi + r8  + TIMER.next], r10w
+	mov	[rdi + rcx + TIMER.prev], r10w
+
+.ok:	clc
+.exit:
+	ret
+
+;---------------------------------------------------------------------------------------------------
+	align 8
+.1st_entry:
+	mov	eax, [rbp + TIMERS.1stFree]
+	mov	rsi, [rbp + TIMERS.ptr]
+	mov	ecx, eax
+	imul	rcx, sizeof.TIMER
+	mov	edi, dword [rsi + rcx + TIMER.data2]	; get next free entry
+
+	mov	r11w, [lapicT_currTID]
+	mov	dword [rbp + TIMERS.head + r14*8], eax
+	mov	dword [rbp + TIMERS.1stFree], edi
+	mov	dword [rbp + TIMERS.cnt + r14*8], 1
+
+	mov	[rsi + rcx + TIMER.returnPtr], r9
+	mov	[rsi + rcx + TIMER.data1], r12
+	mov	[rsi + rcx + TIMER.data2], r13
+	mov	[rsi + rcx + TIMER.wakeUpAt], r8
+	mov	[rsi + rcx + TIMER.next], ax
+	mov	[rsi + rcx + TIMER.prev], ax
+	mov	[rsi + rcx + TIMER.gTID], r11w
+	jmp	.ok
+
+;===================================================================================================
+;
+;	 align 8
+;timer_remove:
+;
+;	   ; theres is a separate remove in lapic timer handler whch removes one entry - the "head"
+;
+;	 ret
 
 ;===================================================================================================
 ;   timer_memAlloc
@@ -136,6 +237,8 @@ timer_in:
 
 	align 8
 timer_memAlloc:
+
+	; code bellow is waiting for a proper "malloc" fnction, and "mem_free"
 
 	push	r8 r9 r12 r13 r14
 
@@ -161,17 +264,14 @@ timer_memAlloc:
 
 	; TODO:
 	; by this time "1stFree" might be different (!= -1)
-	; different thread migh've used timer_in, so "1stFree" and timer list is totally unpredicatable
+	; different thread migh've used timer_in, so "1stFree" and timer list is totally unpredictable
 
-	; basically code bellow waiting for proper malloc & realloc fnctions
 
 	mov	qword [timers_local + TIMERS.ptr], rax		; rax
 	mov	dword [timers_local + TIMERS.blockSz], 16384	; ecx
 	mov	dword [timers_local + TIMERS.1stFree], 0
 	mov	dword [timers_local + TIMERS.cnt], 0
 	mov	dword [timers_local + TIMERS.cnt2], 0
-	; ? 2 heads
-	; ? 2 counters
 
 	; setup free entries:
 
@@ -192,100 +292,9 @@ timer_memAlloc:
 	ret
 
 ;===================================================================================================
-;   timer_insert
-;===================================================================================================
-; input:  r8
-;
-; assume that all registers modified
-
-
-	 align 8
-timer_insert:
-	cmp	dword [rbp + TIMERS.cnt], 0
-	jz	.1st_entry
-
-	mov	eax, [rbp + TIMERS.1stFree]
-	mov	ecx, [rbp + TIMERS.head]
-	mov	r10d, eax
-	mov	ebx, ecx
-	imul	eax, sizeof.TIMER
-	imul	ecx, sizeof.TIMER
-	mov	rdi, [rbp + TIMERS.ptr]
-	mov	edx, [rbp + TIMERS.cnt]
-
-	mov	esi, dword [rdi + rax + TIMER.data2]	; get next free entry
-
-	mov	[rdi + rax + TIMER.returnPtr], r9
-	mov	[rdi + rax + TIMER.data1], r12
-	mov	[rdi + rax + TIMER.data2], r13
-	mov	[rdi + rax + TIMER.wakeUpAt], r8
-
-	mov	[rbp + TIMERS.1stFree], esi
-
-@@:	; start search from the "head" at RCX offset
-	cmp	[rdi + rcx + TIMER.wakeUpAt], r8
-	jae	@f
-	movzx	ecx, [rdi + rcx + TIMER.next]
-	imul	ecx, sizeof.TIMER
-	sub	edx, 1
-	jnz	@b
-@@:
-	; change "head" if needed
-	cmp	[rbp + TIMERS.cnt], edx 		; counter is modified later on
-	jnz	@f
-	mov	[rbp + TIMERS.head], r10d
-@@:
-	; get and update "next" & "prev" of the current entry
-	movzx	r8d, [rdi + rcx + TIMER.prev]
-	mov	r9d, r8d				; r9 prev
-	imul	r8d, sizeof.TIMER
-	add	dword [rbp + TIMERS.cnt], 1
-	movzx	r12d, [rdi + r8 + TIMER.next]		; r12 next
-	mov	[rdi + rax + TIMER.prev], r9w
-	mov	[rdi + rax + TIMER.next], r12w
-
-	; update previous and next entries
-	mov	[rdi + r8  + TIMER.next], r10w
-	mov	[rdi + rcx + TIMER.prev], r10w
-
-.ok:	clc
-.exit:
-	ret
-
-;---------------------------------------------------------------------------------------------------
-	align 8
-.1st_entry:
-	mov	eax, [rbp + TIMERS.1stFree]
-	mov	rsi, [rbp + TIMERS.ptr]
-	mov	ecx, eax
-	imul	rcx, sizeof.TIMER
-	mov	edi, dword [rsi + rcx + TIMER.data2]	; get next free entry
-
-	mov	dword [rbp + TIMERS.head], eax
-	mov	dword [rbp + TIMERS.1stFree], edi
-	mov	dword [rbp + TIMERS.cnt], 1
-
-	mov	[rsi + rcx + TIMER.returnPtr], r9
-	mov	[rsi + rcx + TIMER.data1], r12
-	mov	[rsi + rcx + TIMER.data2], r13
-	mov	[rsi + rcx + TIMER.wakeUpAt], r8
-	mov	[rsi + rcx + TIMER.next], ax
-	mov	[rsi + rcx + TIMER.prev], ax
-	jmp	.ok
-
-;===================================================================================================
-
-	align 8
-timer_remove:
-
-	  ; theres is a separate remove in lapic timer handler whch removes one entry - the "head"
-
-	ret
-
-;===================================================================================================
 ; for debugging purposes:
 
-;macro asdP{
+macro asd{
 timer_list:
 	pushf
 	push	rax rcx rdx rsi rbp r8 r9
@@ -312,4 +321,4 @@ timer_list:
 	pop	r9 r8 rbp rsi rdx rcx rax
 	popf
 	ret
-
+}

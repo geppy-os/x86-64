@@ -12,6 +12,8 @@ thread_create_system:
 	mov	dword [timers_local + TIMERS.1stFree], -1	; init timer list
 
 	mov	word [lapicT_currTID], 0
+	mov	dword [qword 160*24], 0x0e300e30
+	mov	dword [qword 160*24+4], 0x0e300e30
 
 	mov	rdi, cr3
 	mov	[lapicT_kPML4], rdi
@@ -32,7 +34,6 @@ thread_create_system:
 								; 14  12  10  e  c  a  8  4  2	0
 	mov	dword [lapicT_priQuene], 0x87184'00		; 10'00'01'11'00'01'10'00'01'00b shl 8
 								; 2  0	1  3  0  1  2  0  1   0
-
 
 	mov	byte [qword 0], 0x30
 

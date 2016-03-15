@@ -61,12 +61,15 @@ struct THREAD
 				; interrupt (ring0) - we can access everything at that linear addr
 
   time2run	dw ?		; time meant to run in microseconds, max 65.535 milliseconds
+				;  TODO: need to check if (word * ticks-per-ms) fits into 0x6fffffff
 
-  timeLeft2run	dd ?		; positive - can still run, negative - ran too much
-ends				;			    (can accumulate over time)
+  timeDidRun	dd ?		; time it ran last time (could be affected by timers)
+				;    TODO: need better/longer period
 
-; need pml4 location for ring0 sys thread or we can't switch
-
+;  timeLeft2run  dd ?		 ; positive - can still run, negative - ran too much
+				 ;   Can accumulate over time.
+				 ;   Affected by timers, interrupts, other thread switches.
+ends
 
 
 ; if TIMER entry is not allocated then data2 = 2byte index of next free(unallocated) entry
@@ -78,7 +81,7 @@ struct TIMER
   wakeUpAt	dq ?		; low 4bytes time in milliseconds, top 4bytes = # of microseconds
   next		dw ?
   prev		dw ?
-  gPID		dw ?		; global process id
+  gTID		dw ?		; global thread id
   cpuID 	dw ?
 ends
 

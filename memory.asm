@@ -143,9 +143,9 @@ alloc_linAddr:
 	ja	.err
 	test	r9, r9
 	jz	.err
-	test	r9, 127 		; size must be 2BM aligned
+	test	r9, 127 		; size must be 2MB aligned
 	jnz	.err
-	test	r8, 127 		; addr must be 2BM aligned
+	test	r8, 127 		; addr must be 2MB aligned
 	jnz	.err
 
 	mov	r13, r8 		; starting 16kb (1st 4kb out of 4)		  rdi r13 -a

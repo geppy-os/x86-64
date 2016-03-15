@@ -154,17 +154,15 @@ lapicT_currTID	equ	r15+((4096+512)-152)	; ID of most recent thread that was or i
 						; Thread could be asleep with no other threads active
 lapicT_kPML4	equ	r15+((4096+512)-160)
 
-lapicT_time	equ	r15+((4096+512)-168)	; Single timer timeout must be a value that fits fully
-						; into this variable (smaller than unsigned dword).
-						; Microsecond units. ? LAPICT_INIT varies depending on CPU
+lapicT_time	equ	r15+((4096+512)-168)	; Single timer timeout must be <= 0x6fffffff value
+						; Measured in lapic timer ticks.
 
-lapicT_flags	equ	r15+((4096+512)-172)	; bit 0  remove_list id (set after we remove smth and
-						;			there is still something left)
+lapicT_flags	equ	r15+((4096+512)-172)	; bit 0  =1 if bit1 changed, cleared at the end of
+						;			       running function
 						; bit 1  "lapicT_time" ID. Changes when "lapicT_time"
-						;	     overflows. Is used to add timer entries.
+						;	     overflows. Used to add timer entries.
 						; bit 2  =1 if no thread switch requested
 						; bit 3  =1 if lapicT entered handler with bit2 set
-						; bit 4  =1 if we did switch ID of the add_list
 
 lapicT_pri3	equ	r15+((4096+512)-174)	; "head" index of the threads ready to run
 lapicT_pri2	equ	r15+((4096+512)-176)
@@ -286,9 +284,6 @@ PF_ram		equ	r15+(32*1024)		; 32KB
 	include 'files.asm'
 
 	include 'bigDump/numbers.asm'
-
-	include 'thread1.asm'
-	include 'thread2.asm'
 
 ;===================================================================================================
 ;    read-only data for 64bit long mode
