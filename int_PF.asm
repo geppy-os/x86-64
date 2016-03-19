@@ -1,5 +1,5 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
@@ -139,7 +139,7 @@ int_PF:
 	invlpg	[rbp + 4096*3]
 
 	; zero mapped 16kb
-	test	bx, bx
+	test	bx, bx				; BL =0 if 4kb page dirty, !=0 if 4kb with zeroed chunks
 	jnz	@f
 	cld
 	mov	rdi, rbp

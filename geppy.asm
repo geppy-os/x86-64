@@ -23,7 +23,16 @@
 	use16
 
 
-	include 'struct.inc'
+	include 'struct-1.71.39.inc'
+
+	; file "struct-1.71.39.inc" comes from Fasm package
+	; and will not compile with earlier version of Fasm
+	; min for "struct-1.71.39.inc" is Fasm v1.71
+
+	; file "struct-1.70.02.inc" is for those who want to compile on Apple OS X
+	; Fasm v1.70.02 compiler(assembler) for Mac can be found on fasm forum
+
+
 	include 'const.inc'
 
 macro reg val{
@@ -106,7 +115,8 @@ ioapic_inputCnt = data1 + 2384	; 4bytes = 1byte (for each ioapic) * 4
 				; if 0 - corresponding ioapic doesn't exist (after 'parse_MADT runs')
 
 calcTimerSpeed	= data1 + 2388	; runs on one cpu at a time
-_?		= data1 + 2408 ;2440
+pciDevs_info1	= data1 + 2408	; 8b pointer to additional info for pci devices
+_?		= data1 + 2416
 
 ;---------------------------------------------------------------------------------------------------
 ; don't change order of variables in the "lock" sections bellow
@@ -282,7 +292,7 @@ PF_ram		equ	r15+(32*1024)		; 32KB
 	include 'memory.asm'
 	include 'devices_ints.asm'
 	include 'pci.asm'
-	include 'timers_alerts.asm'
+	include 'timers.asm'
 	include 'files.asm'
 
 	include 'bigDump/numbers.asm'
@@ -325,7 +335,7 @@ acpi_rsdt	= vars + 16
 acpi_apic	= vars + 20
 acpi_facs	= vars + 24
 acpi_hpet	= vars + 28
-acpi_ssdt	= vars + 32	; 32 * 4bytes = 128b
+acpi_ssdt	= vars + 32	; 32 tables * 4bytes = 128b
 acpi_ssdt_cnt	= vars + 160	; 16b
 acpi_mcfg_len	= vars + 288
 acpi_dsdt_len	= vars + 292
@@ -338,6 +348,7 @@ acpi_ssdt_len	= vars + 316	; 16b
 mp_table	= vars + 444
 mp_table_len	= vars + 448
 
+pciDevs_cnt	= vars + 980	; 4bytes
 memMap_cnt2	= vars + 986	; 4bytes
 tscBits 	= vars + 990	; 16bytes, check individual bits in a byte and remember bits that never change
 
@@ -353,6 +364,7 @@ vars_end	= vars + 1024
 
 memMap		= vars + 1024	; max 64 entries, 16bytes each, =1KB, all entries must be 16b aligned
 vidModes	= vars + 2048	; max 128 entries, 16bytes each, =2KB
-vbe_temp2	= vars + 4096
+pciDevs 	= vars + 4096	; max 1024 entries, 16bytes each, =16KB
+vbe_temp2	= vars + 20480
 
 dq 0x9198'7497'2048'2712

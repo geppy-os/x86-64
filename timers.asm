@@ -10,7 +10,7 @@
 ;	 r9  - ptr to entry point >=0, or 0 if suspend process and resume after timer fires
 ;	 r12 - data #1
 ;	 r13 - data #2
-;     r14[0]   =1 if periodic
+
 
 	align 8
 timer_at:
@@ -100,16 +100,21 @@ timer_in:
 	; if noThreadSw is active then none of the vars are changed except bit3 in lapicT_flags
 	;-------------------------------------------------------------------------------------------
 
+; device ints can still fire, and so what?
+
+	cmp	dword [qword lapic + LAPICT_INIT], 0
+	jz	@f
 	cmp	r8d, [qword lapic + LAPICT_CURRENT]
 	jae	.ok					; need >= left, lapicT handler handles timeouts
-
+@@:
 	or	dword [qword lapic + LAPICT], 1 shl 16	; mask timer, won't let it fire
 	mfence
 	bt	dword [lapicT_flags], 3
 	jc	.ok					; jump if managed to fire before we masked it
 
 	mov	edi, [qword lapic + LAPICT_INIT]
-	sub	edi, [qword lapic + LAPICT_CURRENT]
+	sub	edi, [qword lapic + LAPICT_CURRENT]	; init_0 - current_? = 0
+reg rdi, 10c2
 	add	[lapicT_time], edi
 	jnc	@f
 
@@ -133,7 +138,7 @@ timer_in:
 	ret
 .err:
 	stc
-	jmp	@b   ;next time I mess with timers is when I get kernel panic
+	jmp	@b
 
 
 ;===================================================================================================
@@ -242,6 +247,7 @@ timer_memAlloc:
 
 	push	r8 r9 r12 r13 r14
 
+	lea	rbp, [timers_local]
 	mov	rax, [rbp + TIMERS.ptr] 	; could be 0, ok
 	mov	r9d, [rbp + TIMERS.blockSz]
 	mov	r8, rax
@@ -283,6 +289,7 @@ timer_memAlloc:
 	add	ecx, 1
 	sub	esi, 1
 	jnz	@b
+
 	xor	ecx, ecx
 	not	rcx
 	mov	[rax + TIMER.data2], rcx

@@ -5,45 +5,57 @@
 
 init_ps2Mouse:
 
-    align 8
+;===================================================================================================
+;  rtc_int   -	normally, this RTC interrupt happens twice a second
+;===================================================================================================
+
+    align 16
 rtc_int:
-	push	r15 r8 rax rcx rsi rdi
-	sub	rsp, 104			; 96bytes available since we have a "call" in here
+	cmp	byte [sp_rtc_job - (104 + 6*8)], 0x7f
+
+	push	rcx r15 r8 rax rsi rdi
+	lea	rsp, [rsp - 104]		; we have a "call" here, additional 8bytes of stack
+
+	ja	.lapicT_restart
+	jz	.first_init			; 1st interrupt is ignored (after initialization)
 
 	mov	eax, 0xc
 	out	0x70, al
 	in	al, 0x71
-
-	cmp	byte [sp_rtc_job], 0x7f
-	jz	.first_init			; 1st interrupt is ignored (after initialization)
-	ja	.lapicT_restart
 
 	add	byte [qword 8], 1
 	add	byte [qword time], 1		; <-- need to change this into 31bit value
 
 .exit:
 	add	rsp, 104
-	pop	rdi rsi rcx rax r8 r15
+	pop	rdi rsi rax r8 r15 rcx
 	mov	dword [qword lapic + LAPIC_EOI], 0
 	iretq
 
 .first_init:
+	mov	eax, 0xc
+	out	0x70, al
+	in	al, 0x71
+
 	add	byte [sp_rtc_job], 1
 	jmp	.exit
 
 
-;----------------------------------------------------------------------------------------------------=
-.get_time:
 
-;----------------------------------------------------------------------------------------------------=
-	; we measure lapic timer ticks 5 times,
+;===================================================================================================
+; measure lapic timer ticks 5 times
 
-	align 8
+	align 16
 .lapicT_restart:
-	mov	eax, [qword lapic + LAPICT_CURRENT]		; read current value
+	mov	r8d, [qword lapic + LAPICT_CURRENT]
 	mov	dword [qword lapic + LAPICT_INIT], -1		; reinit counter
 	mov	ecx, 1
 	xadd	[sp_rtc_job], cl
+
+	mov	eax, 0xc
+	out	0x70, al
+	in	al, 0x71
+
 	and	ecx, 127
 	jz	.exit
 	cmp	ecx, 5				; did we have enough samples ?
@@ -52,7 +64,7 @@ rtc_int:
 	; save values from [lapic + LAPICT_CURRENT] at [calcTimerSpeed + offset]
 	mov	esi, calcTimerSpeed
 	lea	rsi, [rsi + rcx*4 - 4]
-	mov	[rsi], eax
+	mov	[rsi], r8d
 	jmp	.exit
 @@:
 	; stop measurment of lapic timer speed

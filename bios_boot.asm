@@ -67,7 +67,6 @@ bios_boot:
 	mov	ebp, [di + 4]
 	mov	edx, [di + 8]
 	mov	ecx, [di + 16]
-
 	cmp	edx, 4096		; if weird size (TODO: test 64bit value)
 	jb	.e820_badSize
 
@@ -168,7 +167,114 @@ bios_boot:
 ; Quick PCI bus scan, will be used to determine if we need to mess with VBE or we have device driver
 ;===================================================================================================
 
+	push	gs
+	pop	ds
+	mov	edi, pciDevs
 
+	movzx	ebp, byte [gs:max_pci_bus]
+	shl	ebp, 16
+	or	ebp, 0x8000ffff 		; max bus:dev:func
+	push	ebp
+
+	mov	esi, 0x80000000
+	jmp	.pci_scan_2
+.pci_scan:
+	or	esi, 0x700
+	add	esi, 0x100			; device++
+.pci_scan_2:
+	xor	bx, bx
+	cmp	esi, [ss:esp]
+	jae	.done_pci_scan
+
+	mov	dx, 0xcf8
+	mov	eax, esi			; vendor, device
+	out	dx, eax
+	mov	dx, 0xcfc
+	in	eax, dx
+	mov	ecx, eax
+
+	lea	eax, [esi + 0xc]		; BIST, Header, 2 more values
+	mov	dx, 0xcf8
+	out	dx, eax
+	mov	dx, 0xcfc
+	in	eax, dx
+
+	; BX must be 0 if valid device/vendor
+	cmp	cx, -1
+	setz	bl				; bx = 1 if invalid device/vendor
+	cmp	cx, 1
+	adc	bx, 0				; bx >=1 if invalid device/vendor
+	jnz	.pci_func			; bx !=0 if we only investigate other funtions
+
+	mov	ebx, eax
+
+	lea	eax, [esi + 0x8]		; classcode, revision
+	mov	dx, 0xcf8
+	out	dx, eax
+	mov	dx, 0xcfc
+	in	eax, dx
+
+	add	dword [pciDevs_cnt], 1
+	mov	[di], esi			; bus/dev/func
+	mov	[di + 4], ecx			; dev/vendor
+	mov	[di + 8], eax			; classcode
+	mov	[di + 12], ebx
+	add	di, 16
+	cmp	dword [pciDevs_cnt], 1023
+	jae	.done_pci_scan
+
+	mov	eax, ebx
+.pci_func:
+	cmp	eax, -1
+	jz	.pci_scan
+	bt	eax, 23 			; is this multi function device
+	jnc	.pci_scan
+@@:
+	add	esi, 0x100
+	test	esi, 0x700
+	jz	.pci_scan_2
+
+	mov	dx, 0xcf8
+	mov	eax, esi
+	out	dx, eax
+	mov	dx, 0xcfc
+	in	eax, dx
+
+	cmp	ax, -1
+	jz	@b
+	test	ax, ax
+	jz	@b
+
+	mov	ecx, eax
+
+	lea	eax, [esi + 0xc]		; BIST, Header, 2 more values
+	mov	dx, 0xcf8
+	out	dx, eax
+	mov	dx, 0xcfc
+	in	eax, dx
+
+	mov	ebx, eax
+
+	lea	eax, [esi + 0x8]		; classcode, revision
+	mov	dx, 0xcf8
+	out	dx, eax
+	mov	dx, 0xcfc
+	in	eax, dx
+
+	add	dword [pciDevs_cnt], 1
+	mov	[di], esi			; bus/dev/func
+	mov	[di + 4], ecx			; dev/vendor
+	mov	[di + 8], eax			; classcode
+	mov	[di + 12], ebx
+	add	di, 16
+	cmp	dword [pciDevs_cnt], 1023
+	jb	@b
+
+.done_pci_scan:
+	add	esp, 4
+
+;===================================================================================================
+;  VESA BIOS Extensions
 ;===================================================================================================
 
 	mov	ax, 0x4f00
@@ -270,21 +376,18 @@ bios_boot:
 	jb	.vbeModes
 
 
+;---------------------------------------------------------------------------------------------------
 .vbeModes_done:
-	movzx	eax, byte [vidModes_cnt]
-	reg	eax
-
 	jmp	.vid_setMode
 
-;---------------------------------------------------------------------------------------------------
-
-	mov	byte [vidModes_sel], 4
+	movzx	eax, byte [vidModes_cnt]
+	mov	byte [vidModes_sel], 0
 
 .vid_table_entry_2:
 
 	movzx	ax, byte [vidModes_cnt] 	; TODO: 0 video modes ????
 	sub	ax, 1
-	;jc	 .....
+	jc	.enter_pmode
 	cmp	byte [vidModes_sel], 0
 	jge	@f
 	mov	byte [vidModes_sel], 0
@@ -303,7 +406,7 @@ bios_boot:
 
 .vid_table_entry:
 	inc	dx
-	cmp	[vidModes_cnt], dx
+	cmp	[vidModes_cnt], dl
 	jbe	.vid_waitForKey
 
 	mov	si, dx
@@ -414,6 +517,8 @@ bios_boot:
 ;	 out	 0xA1, al
 
 
+;===================================================================================================
+.enter_pmode:
 	; set timer to one-shot mode
 	cli
 	xor	eax, eax
@@ -531,7 +636,7 @@ reg16:
 	popfd
 	ret 4
 
-.cursor dw 160
+.cursor dw 32
 
 ;---------------------------------------------------------------------------------------------------
 GDTR_RMode:

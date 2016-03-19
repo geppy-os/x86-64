@@ -383,10 +383,20 @@ lapicT_calcSpeed:
 	neg	edi
 	neg	esi
 	neg	ebp
+
+	reg	rax, 84f
+	reg	rdi, 84f
+	reg	rsi, 84f
+	reg	rbp, 84f
+
 	add	rax, rsi
 	add	rdi, rbp
 	add	rax, rdi
-	shr	rax, 2
+	shr	rax, 1
+	adc	rax, 0
+	shr	rax, 1
+	adc	rax, 0
+	reg	rax, 84f
 
 	;--- calculate for 1ms ----
 
@@ -406,7 +416,7 @@ lapicT_calcSpeed:
 	shl	rsi, 32
 	or	rax, rsi
 	mov	[lapicT_ms], rax
-	;reg	 rax, 101f
+	reg	rax, 106f
 
 	;--- calculate for 1us ----  (1ms = 1000us)
 
@@ -424,7 +434,7 @@ lapicT_calcSpeed:
 	shl	rsi, 32
 	or	rax, rsi
 	mov	[lapicT_us], rax
-	;reg	 rax, 101f
+	reg	rax, 106f
 
 	pop	rbp rdi rsi rdx rcx rax
 	ret

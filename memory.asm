@@ -3,6 +3,14 @@
 ; All Rights Reserved.
 
 
+;===================================================================================================
+;    mem_mapIO	-  map device MMIO, lin addr must already be allocated with PG_IO_ALLOC flag
+;===================================================================================================
+; mapping of PCI devices at "pcie" address is done differently
+
+	align 8
+mem_mapIO:
+	ret
 
 ;===================================================================================================
 ;    mem_setFlags  -  set paging flags for individual 4KB pages, lin addr must already be allocated
@@ -305,7 +313,11 @@ alloc_linAddr:
 	rol	rbp, 9
 	rol	rcx, 9
 	or	rdi, r9
-	mov	r8, PG_USER + PG_RW + PG_ALLOC + PG_MORE_STACK + PG_XD
+
+	; flags allowed to be used:
+	mov	r8, PG_USER + PG_RW + PG_ALLOC + PG_MORE_STACK + PG_XD +\
+		    PG_IO_ALLOC
+
 	and	ebp, 0x3ffff		; 18bits (PDes & PTes)
 	and	ecx, 0x3ffff
 	and	rbx, r8

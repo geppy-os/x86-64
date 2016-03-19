@@ -327,23 +327,26 @@ macro ___debug_showMem2{
 	movd	mm7, ebp
 
 .sort_startMemAddr:
-	mov	ebx, [esi + 16]
-	cmp	[esi], ebx
-	ja	.sort_swap
-	jb	.sort_next
-
 	mov	ecx, [esi + 4]
-	mov	edx, [esi + 20]
-	and	ecx, 0xffffff
-	and	edx, 0xffffff
-	cmp	ecx, edx
-	jae	.sort_next
+	mov	eax, [esi + 20]
+	and	ecx, 0xffffff		; remove mem type byte
+	and	eax, 0xffffff
+
+	cmp	ecx, eax
+	jb	.sort_next
+	ja	.sort_swap
+
+	mov	eax, [esi + 16]
+	cmp	[esi], eax
+	jbe	.sort_next
+
 .sort_swap:
 	movdqa	xmm0, [esi]
 	movdqa	xmm1, [esi + 16]
-	add	edi, 1
+	or	edi, 1
 	movdqa	[esi], xmm1
 	movdqa	[esi + 16], xmm0
+
 .sort_next:
 	add	esi, 16
 	sub	ebp, 1
@@ -357,12 +360,7 @@ macro ___debug_showMem2{
 	xor	edi, edi
 	jmp	.sort_startMemAddr
 .sort_done:
-	;___debug_showMem2
-	;___debug_showMem1
-
-
 	; TODO: check so that one mem entry doesn't overlap with the other mem entry
-
 	; TODO: disable 1st MB of RAM
 
 ;===================================================================================================
@@ -443,13 +441,13 @@ macro ___debug_showMem2{
 	jnz	@f
 
 	mov	ebx, eax
-	mov	edi, 0x10000
+	mov	edi, 0x40000
 	add	ebx, ecx
 	jc	k32err.4			; little sanity check
 	cmp	eax, edi
-	jae	@f
+	jae	@f				; exit if starting addr >= 4gb
 	cmp	ebx, edi
-	jbe	@f
+	jbe	@f				; exit if ending addr <= 4GB
 
 	sub	edx, 1				; only one entry that splits 4GB region can exist
 	jnz	k32err.5
@@ -519,13 +517,6 @@ macro ___debug_showMem2{
 	mov	dword [memMap + rmData	+ edi+8], edx
 	mov	dword [memMap + rmData	+ edi+12], 0
 	add	byte [memMap_cnt + rmData], 1
-
-	reg	ebx, 80a
-	reg	edx, 80a
-
-	reg	eax, 80a
-	reg	ecx, 80a
-
 @@:
 	sub	ecx, edx
 	jbe	k32err.7
@@ -560,12 +551,15 @@ macro ___debug_showMem2{
 
 .alloc2_done:
 	movd	xmm7, eax			;					XMM7
-	cmp	eax, 0x40000			; 2MB must start bellow 4GB
-	jae	k32err.f
+	cmp	eax, 0x40000-0x80		; 2MB must start bellow 4GB
+	ja	k32err.f
 
+	reg	eax, 80e
 	push	0x200000 eax			; size & addr
 	call	memTest32
 	jnz	.alloc2_2mb
+
+	;___debug_showMem2
 
 ;================================================================== alloc several 16KB chunks ======
 
@@ -586,15 +580,20 @@ macro ___debug_showMem2{
 	mov	ecx, [esi + 8]
 	cmp	byte [esi + 7], 1
 	jnz	.alloc16_switch
-	cmp	eax, 0x10000
+	test	ecx, ecx
+	jz	k32err.11
+
+	add	eax, ecx
+	jc	k32err.10
+	cmp	eax, 0x40000
 	jae	.alloc16_switch
 
-	lea	ebx, [eax + ecx - 1]
-	push	16384 ebx
+	sub	eax, 1
+	push	16384 eax
 	call	memTest32
 	jnz	@f
 
-	push	ebx
+	push	eax
 	add	edx, 1
 @@:
 	sub	ecx, 1
@@ -614,6 +613,7 @@ macro ___debug_showMem2{
 
 	movzx	eax, byte [memMap_cnt + rmData]
 	mov	[memMap_cnt2 + rmData], eax
+
 
 ;===================================================================================================
 
@@ -778,7 +778,6 @@ k32err:
 	jmp	@f
 .c:	mov	dword [0xb8000+.offset], (4 shl 24) + ('c' shl 16) + (4 shl 8) + '0'
 	jmp	@f
-;-------
 .d:	mov	dword [0xb8000+.offset], (4 shl 24) + ('d' shl 16) + (4 shl 8) + '0'
 	jmp	@f
 .e:	mov	dword [0xb8000+.offset], (4 shl 24) + ('e' shl 16) + (4 shl 8) + '0'
@@ -789,6 +788,7 @@ k32err:
 	jmp	@f
 .11:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('1' shl 16)
 	jmp	@f
+;-------
 .12:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('2' shl 16)
 	jmp	@f
 @@:
@@ -898,7 +898,7 @@ reg32:
 	ret 8
 
 	align 4
-.cursor dd 0320    ; in bytes, 2bytes per symbol in text mode
+.cursor dd 160 ;0960	; in bytes, 2bytes per symbol in text mode
 
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////

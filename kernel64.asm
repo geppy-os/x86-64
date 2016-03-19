@@ -126,8 +126,6 @@ LMode:
 ;===================================================================================================
 
 	call	acpi_parse_MADT 		; + setup IOAPICs & ISA->IOAPIC redirection
-	call	pci_figureMIMO
-	call	pci_getBARs			; disables devices I/O, best done when nothing running
 
 	; get lapic address
 	mov	ecx, LAPIC_MSR
@@ -176,6 +174,17 @@ LMode:
 	call	dev_install
 
 
+	; Wait for LAPIC Timer speed to be measured so that we can use timers
+	;---------------------------------------------------------------------
+	;     We can't put CPU to sleep as lapic timer will be suspended And there will be a slight
+	;     delay before timer returns to full speed as CPU is waking up.
+	;     A simple HLT instruction on modern CPUs will put CPU to noticebale sleep mode.
+
+
+	;call	 rand_calcTSC
+	call	pci_figureMMIO
+	;call	 rand_calcTSC	; if user not moving mouse then use TSC - next best thing
+
 	call	fragmentRAM
 @@:	call	fragmentRAM
 	jc	k64err				; not enough memory
@@ -187,25 +196,19 @@ LMode:
 	jb	@b
 
 	call	refill_pagingRam
-
-	; wait for lapic timer speed to be measured so that we can use timers
-	;     We can't put CPU to sleep as lapic timer will be suspended And there will be a slight
-	;     delay before timer returns to full speed as CPU is waking up.
-	;     A simple HLT instruction on modern CPUs will put CPU to noticebale sleep mode.
-
+	;call	 rand_calcTSC
 @@:
 	cmp	byte [rtc_job], 0
 	jz	.calc_timer_speed
 	call	fragmentRAM
-
-	pushf
-	rdtsc  ;
-	popf
-
 	jmp	@b
 
 .calc_timer_speed:
 	call	lapicT_calcSpeed
+	call	pci_getBARs			; skips Bridges since we are using RTC
+	;call	 rand_calcTSC
+
+
 
 	; bit set - thread id available
 	xor	eax, eax
@@ -231,7 +234,9 @@ LMode:
 	;mov	 dword [lapicT_time], 0xffff'ffff - 0x19000
 
 
-	mov	dword [qword lapic + LAPICT_INIT], 0x202
+	;mov	 dword [qword lapic + LAPICT_INIT], 0x202
+
+
 
 
 	mov	r8d, 1000*0x35+10
@@ -273,9 +278,6 @@ LMode:
 
 
 
-
-
-
 	mov	eax, [lapicT_ms]
 	reg	rax, 81e
 	mov	eax, [lapicT_us]
@@ -286,117 +288,14 @@ LMode:
 	reg	rax, 101e
 
 
-
-
-
-	movzx	ebp, byte [qword max_pci_bus + rmData]
-	reg	rbp, 84f
-	shl	ebp, 16
-	or	ebp, 0x8000ffff 		; max bus:dev:func
-	push	rbp
-	reg	rbp, 84f
-
-	mov	esi, 0x80000000
-	jmp	.pci_scan_2
-.pci_scan:
-	or	esi, 0x700
-	add	esi, 0x100			; device++
-.pci_scan_2:
-	xor	bx, bx
-	cmp	esi, [rsp]
-	jae	.done_pci_scan
-
-reg rsi, 804
-	mov	dx, 0xcf8
-	mov	eax, esi			; vendor, device
-	out	dx, eax
-	mov	dx, 0xcfc
-	in	eax, dx
-	mov	ecx, eax
-
-	lea	eax, [esi + 0xc]		; BIST, Header, 2 more values
-	mov	dx, 0xcf8
-	out	dx, eax
-	mov	dx, 0xcfc
-	in	eax, dx
-
-	; BX must be 0 if valid device/vendor
-	cmp	cx, -1
-	setz	bl				; bx = 1 if invalid device/vendor
-	cmp	cx, 1
-	adc	bx, 0				; bx >=1 if invalid device/vendor
-	jnz	.pci_func
-
-	mov	ebx, eax
-
-	lea	eax, [esi + 0x8]		; classcode, revision
-	mov	dx, 0xcf8
-	out	dx, eax
-	mov	dx, 0xcfc
-	in	eax, dx
-
-	reg	rcx, 806
-	reg	rax, 806
-	reg	rbx, 806
-
-	mov	eax, ebx
-.pci_func:
-	cmp	eax, -1
-	jz	.pci_scan
-	bt	eax, 23 			; is this multi function device
-	jnc	.pci_scan
-
-@@:
-	add	esi, 0x100
-	test	esi, 0x700
-	jz	.pci_scan_2
-
-reg rsi, 80a
-
-	mov	dx, 0xcf8
-	mov	eax, esi
-	out	dx, eax
-	mov	dx, 0xcfc
-	in	eax, dx
-
-	cmp	ax, -1
-	jz	@b
-	test	ax, ax
-	jz	@b
-
-	mov	ecx, eax
-
-	lea	eax, [esi + 0xc]		; BIST, Header, 2 more values
-	mov	dx, 0xcf8
-	out	dx, eax
-	mov	dx, 0xcfc
-	in	eax, dx
-
-	mov	ebx, eax
-
-	lea	eax, [esi + 0x8]		; classcode, revision
-	mov	dx, 0xcf8
-	out	dx, eax
-	mov	dx, 0xcfc
-	in	eax, dx
-
-	reg	rcx, 806
-	reg	rax, 806
-	reg	rbx, 806
-
-	jmp	@b
-
-.done_pci_scan:
-	add	rsp, 8
-
+;===================================================================================================
+;//////    System Thread    ////////////////////////////////////////////////////////////////////////
+;===================================================================================================
 
 ; save vars on user stack, we modify stack, put there data and a return address for the timer handler
 ; return addr comes from "registers" block
 ; from timer handler we go executing regular code of the same thread, and it'll call sleep if nothing to do
 
-;===================================================================================================
-;//////    System Thread    ////////////////////////////////////////////////////////////////////////
-;===================================================================================================
 	align 8
 os_loop:
 	add	byte [qword 160*24], 1
@@ -422,7 +321,8 @@ os_loop:
 
 
 	;-----------------------------------------------------------------------------------
-	test	dword [k64_flags], 1	; could use LAPICT_CURRENT OR LAPICT_INIT(better)
+	cmp	dword [qword lapic + LAPICT_INIT], 0
+	; now we get interrupt that triggers thread resume from sleep and we got HLT here
 	jnz	@f
 	mov	rax, cr8
 	hlt

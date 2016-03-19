@@ -26,10 +26,11 @@ define PG_RW		2
 define PG_USER		4
 define PG_PS		(1 shl 7)
 define PG_G		(1 shl 8)
-define PG_ALLOC_USER	(1 shl 9)	; ?
+define PG_IO_ALLOC	(1 shl 9)	; page allocated for Memory Mapped IO
 define PG_MORE_STACK	(1 shl 10)	; alloc more stack, upper page must be mapped and have this flag
-define PG_ALLOC 	(1 shl 11)
+define PG_ALLOC 	(1 shl 11)	; physical RAM will be supplied when accessed
 define PG_ZERO_ONACCESS (1 shl ?)
+define PG_ALLOC_USER	(1 shl ?)	; ?
 define PG_XD		(1 shl 63)
 
 define FUNC_ALLOCLINADDR	0
