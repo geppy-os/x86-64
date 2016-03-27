@@ -13,10 +13,18 @@ PMode:
 	mov	fs, ax
 	mov	gs, ax
 
+	;------------------------------------------
+	mov	eax, 1
+	cpuid		; 1fcbfbff
+	bt	edx, 16
+	setc	byte [feature_PAT]	; tested on Intel CPU only
+	reg	edx, 80c
+		      ; jmp $
 	mov	eax, 0x80000000
 	cpuid
 	cmp	eax, 0x80000008
 	jb	k32err.no_longMode
+	;------------------------------------------
 
 	mov	eax, cr0
 	;		   CD		 NW	 AM(align off)	EM(run MMX)
@@ -616,9 +624,7 @@ macro ___debug_showMem2{
 
 
 ;===================================================================================================
-
-	; copy 64bit kernel
-	;----------------------------------
+; copy 64bit kernel
 
 	movd	ecx, xmm7
 	mov	edi, _pmode_ends
@@ -631,21 +637,19 @@ macro ___debug_showMem2{
 	sub	esi, 16
 	jge	@b
 
-	; setup initial paging
-	;----------------------------------
+;===================================================================================================
+; setup initial paging
 
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
-;reg esi, 82f
+
 	mov	cr3, esi			; pml4
 	movd	ebx, xmm7			; 2mb in 16kb units
 	lea	eax, [esi + 4096   + 7] 	; Present, R/W, User
 	lea	ecx, [esi + 4096*2 + 3]
 	lea	edi, [esi + 4096*3 + 3]
-;reg eax, 82f
-;reg ecx, 82f
-;reg edi, 82f
+
 	shl	ebx, 14
 	or	ebx, 0x81			; PageSize=1, Present
 	mov	[esi], eax			; PML4		-> PDP-0 (512GB)
@@ -656,6 +660,8 @@ macro ___debug_showMem2{
 	sub	edi, 3
 	or	esi, 3
 	mov	[esi + 511*8-3], esi		; last PML4 entry to the same PML4 table
+
+	movd	xmm6, ecx			; PD-0	=  xmm6
 
 	; identity map 1st lowest 512KB (from 0x00000 to 0x7ffff)
 	push	ecx edi
@@ -677,7 +683,8 @@ macro ___debug_showMem2{
 	mov	dword [edi + 40], 0xbe000 + 10011b
 	mov	dword [edi + 48], 0xbf000 + 10011b
 
-	;------------------------------------------
+;---------------------------------------------------------------------------- map shared data ------
+
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
@@ -692,8 +699,124 @@ macro ___debug_showMem2{
 	mov	[edi + 0x1fe * 8], ebx		 ;	      3
 	mov	[edi + 0x1ff * 8], ebp		 ; locks
 
-;================================================================= per CPU 64KB of linear space ====
+;-------------------------------------------------------------------------------- map VBE LFB ------
+
+
+	shl	dword [esp], 14
+	call	zeroMem32
+	pop	esi
+	movd	xmm5, esi
+
+	movzx	eax, byte [vidModes_sel + rmData]
+	add	ecx, ((vbeLfb shr (12+9)) and 0x1ff)*8
+	cmp	eax, 0xff
+	jz	.vbe_is_mapped			; invalid video mode
+
+	imul	eax, sizeof.VBE
+	movzx	ebp, [eax + vidModes + rmData + VBE.height]
+	movzx	ebx, [eax + vidModes + rmData + VBE.bps]
+	mov	edi, [eax + vidModes + rmData + VBE.lfb]
+	mov	dword [vbeLfb_ptr + rmData], vbeLfb
+
+	imul	ebp, ebx			; height *= scanline in bytes
+	reg	ebp, 80a
+	mov	eax, edi
+	or	edi, 3
+	and	eax, 0x1fffff			; if starting addr is 2MB aligned
+	jz	.map_vbe_2mb			; then start mapping in 2MB chunks right away
+	test	eax, 4095
+	jz	.vbe_align_phys_addr
+	mov	byte [vidModes_sel + rmData], -1
+	jmp	.vbe_is_mapped
+	;---------------------------------
+
+.vbe_align_phys_addr:
+	; code bellow prior to ".map_vbe_2mb" was not properly tested
+	; due to lack of real life cases
+
+	; some woodo magic
+	mov	edx, ecx
+	mov	ecx, eax
+	add	[vbeLfb_ptr + rmData], eax
+	neg	eax
+	jz	k32err.13
+	shr	ecx, 12
+	and	eax, 0x1fffff
+	mov	ebx, ebp
+	xor	esi, esi
+	sub	ebp, eax			; total size -= smaller chunk
+	cmovc	eax, ebx
+	cmovc	ebp, esi			; use smallest size, either EBP or EAX
+	shl	ecx, 3
+
+	movd	esi, xmm5
+	lea	ebx, [esi + 4096]
+	lea	esi, [esi + ecx + 3]
+	btr	edi, 7				; remove PG_PS flag
+	mov	ecx, edx
+	mov	[ecx], esi			; PDe -> PT (covers 2MB)
+	add	ecx, 8
+	sub	esi, 3
+	movd	xmm5, ebx
+@@:
+	mov	[esi], edi
+	add	esi, 8
+	add	edi, 4096
+	sub	eax, 4096
+	jnz	@b
+
+	test	ebp, ebp
+	jz	.vbe_is_mapped
+
+	; additional sanity checks
+	test	esi, 4095
+	jnz	k32err.14
+	mov	ebx, edi
+	and	edi, not 4095
+	test	edi, 0x1fffff
+	jnz	k32err.12
+	mov	edi, ebx
+
+	;---------------------------------
+.map_vbe_2mb:
+	sub	ebp, 0x200000
+	jc	.map_vbe_leftover		; jump mainly taken for small resoultions
+	bts	edi, 7				; set PG_PS
+@@:
+	mov	[ecx], edi			; PDe -> 2MB page
+	add	ecx, 8
+	add	edi, 0x200000
+	sub	ebp, 0x200000
+	jg	@b
+	jz	.vbe_is_mapped
+
+.map_vbe_leftover:
+	add	ebp, 0x200000
+	jz	.vbe_is_mapped
+	;---------------------------------
+
+	; process remaining 2MB
+	movd	esi, xmm5
+	lea	eax, [esi + 4096]
+	or	esi, 3
+	btr	edi, 7				; remove PG_PS flag
+	mov	[ecx], esi			; PDe -> PT (covers 2MB)
+	sub	esi, 3
+	movd	xmm5, eax
+@@:
+	mov	[esi], edi
+	add	esi, 8
+	add	edi, 4096
+	sub	ebp, 4096
+	jg	@b
+
+.vbe_is_mapped:
+
+;================================================================ map CPU private memory (64KB) ====
+;
 ; 1st cpu starts at 4MB, look in 'geppy.asm' for names in comments
+
+	movd	ecx, xmm6			; restore ECX, PD-0
 
 	shl	dword [esp], 14
 	call	zeroMem32
@@ -707,7 +830,7 @@ macro ___debug_showMem2{
 	lea	eax, [esi + 4096]
 	lea	ebx, [esi + 4096*2]
 	lea	ebp, [esi + 4096*3]
-	mov	[ecx + 16], esi 		 ; PD-2 [4-6mb)  -> PageTable (2MB)
+	mov	[ecx + 16], esi 		 ; PDe-2 [4-6mb)  -> PageTable (2MB)
 	sub	esi, 3
 	mov	[esi], eax			 ; idt
 	mov	[esi + 8], ebx			 ; stack for some exceptions
@@ -788,8 +911,13 @@ k32err:
 	jmp	@f
 .11:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('1' shl 16)
 	jmp	@f
-;-------
 .12:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('2' shl 16)
+	jmp	@f
+.13:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('3' shl 16)
+	jmp	@f
+.14:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('4' shl 16)
+	jmp	@f
+.15:	mov	dword [0xb8000+.offset], 0x04000400 + '1' + ('5' shl 16)
 	jmp	@f
 @@:
 	mov	esi, .k32err

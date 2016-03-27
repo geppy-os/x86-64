@@ -13,8 +13,6 @@
 
 ; most variables(memory locations) are defined in this file
 ; most constants and offsets are in "const.inc"
-;
-; ALL "include"s ARE IN THIS FILE ONLY	 (like	 include 'kernel32.asm')
 
 
 
@@ -45,7 +43,7 @@ macro reg val{
 macro reg val, flags{
 	pushf
 	push	  eax
-	mov	  eax, val
+	mov	  eax, dword val
 	pushd	  flags#h eax
 	call	  reg32
 	pop	  eax
@@ -97,7 +95,9 @@ data1	= 0x1fc000
 data2	= 0x1fd000
 data3	= 0x1fe000
 locks	= 0x1ff000
-vbeLfb	= 0x2d000000	; at 720MB, 48MB in size
+
+; vbeLfb & pcie are expected to be inside same Gigabyte
+vbeLfb	= 0x2c000000	; at 704MB, 64MB in size (must be 2MB aligned bellow 512GB)
 pcie	= 0x30000000	; at 768MB, 256MB in size
 
 gdt		= data1
@@ -116,7 +116,10 @@ ioapic_inputCnt = data1 + 2384	; 4bytes = 1byte (for each ioapic) * 4
 
 calcTimerSpeed	= data1 + 2388	; runs on one cpu at a time
 pciDevs_info1	= data1 + 2408	; 8b pointer to additional info for pci devices
-_?		= data1 + 2416
+
+k64_flags2	= data1 + 2416	; bit0	=1 if we can use draw (some video was set sucessfully)
+
+screen		= data1 + 2424
 
 ;---------------------------------------------------------------------------------------------------
 ; don't change order of variables in the "lock" sections bellow
@@ -267,7 +270,19 @@ tss_data	equ	r15+(12*1024+128)	; TSS is closer to threads, same 4KB (2176=2048+1
 
 errF		equ	r15+(12*1024+384)	; increment index at the beginning of the function, store func id, dec at the end
 						; function call trace
-_?		equ	r15+(12*1024+388)
+
+ps2_mouseBytes	equ	r15+(12*1024+388)	; 8b for PS2 Mouse
+ps2_packetCnt	equ	r15+(12*1024+396)	; 4b, PS2 Mouse
+ps2_packetMax	equ	r15+(12*1024+400)	; 4b, PS2 Mouse
+ps2_mouseState	equ	r15+(12+1024+404)
+ps2_kbdState	equ	r15+(12+1024+408)
+ps2_mouseFlags	equ	r15+(12+1024+412)
+
+_x		equ	r15+(12+1024+416)
+_y		equ	r15+(12+1024+418)
+_z		equ	r15+(12+1024+420)
+_btns		equ	r15+(12+1024+422)
+
 
 threads 	equ	r15+(13*1024)		; 3KB, its an array, thread id = index of thread entry
 
@@ -294,8 +309,14 @@ PF_ram		equ	r15+(32*1024)		; 32KB
 	include 'pci.asm'
 	include 'timers.asm'
 	include 'files.asm'
+	include 'random.asm'
 
 	include 'bigDump/numbers.asm'
+
+	include 'devices/ps2.asm'		; PS2 cntrl/mouse/kbd initialization, irq handlers
+
+	include 'graph2d/graph2d.asm'		; 2d graphics, contains many 'include's
+	include 'gui/gui.asm'			; Graphical User Interface, contains many 'include's
 
 ;===================================================================================================
 ;    read-only data for 64bit long mode
@@ -315,6 +336,111 @@ _idt_exceptions_lmode:
 	dw	int_dummy1-int_handlers, int_MF-int_handlers, int_AC-int_handlers
 	dw	int_MC-int_handlers, int_XM-int_handlers, int_VE-int_handlers
   .cnt = ($-_idt_exceptions_lmode)/2
+
+_aaa:
+dq 0xb0b0b0b0b0b0b0b0
+dq 0xb0b0b0b0b0b0b0b0
+
+dq 0x5050505050505050
+dq 0x5050505050505050
+       macro sad{
+
+.C: dw 0111110b
+    dw 1000001b
+    dw 1000001b
+    dw 0000110b
+    dw 0001000b
+    dw 0110000b
+    dw 1000001b 		    ; 56
+    dw 1000001b
+    dw 0111110b
+
+
+.C: dw 011110b
+    dw 100001b
+    dw 100000b
+    dw 100000b
+    dw 100000b
+    dw 100000b
+    dw 100001b
+    dw 011110			  ; 56
+
+.c: dw 011110b
+    dw 100001b
+    dw 100000b
+    dw 100000b
+    dw 100001b
+    dw 011110
+		; n0 up, n1 down, 1n right, 0n left
+
+		; -0 vertical, -1 horizontal
+		; 1- dn        1- right
+		; 0  up        0- left
+
+		; 0-00	dn,right  (0 both horizontal & vertical)
+		; 0-10	dn,left
+		; 0-01	up,right
+		; 0-11	up,left
+
+		; 1-00	dn
+		; 1-01	up
+		; 1-10	right
+		; 1-11	left
+
+    db 5'2	; coordinate x(max 16), y(max 16) from the top of largest letter
+    db 0	; chain length in bytes
+;    db 00'
+
+
+
+	test	eax, 1
+	jz	@f
+
+@@:
+	shr	eax, 1
+	jc	@f
+;------------------------------------------
+		; 0-00	dn,right  (0 both horizontal & vertical)
+		; 0-10	dn,left
+		; 0-01	up,right
+		; 0-11	up,left
+
+	and	eax, 3
+	cmp	eax, 2
+	ja	.up_left
+	jz	.dn_left
+	jp	.up_right
+	jmp	.dn_right
+
+;------------------------------------------
+@@:
+
+
+	cmp	eax, 2
+	ja	.left
+	jz	.right
+	jp	.up
+	jmp	.dn
+
+
+
+
+
+
+	intel section 4.1.4	 Enumeration of Paging Features by CPUID
+}
+
+
+
+
+
+
+
+
+
+
+
+
 
 _lmode_ends:
 
@@ -348,6 +474,9 @@ acpi_ssdt_len	= vars + 316	; 16b
 mp_table	= vars + 444
 mp_table_len	= vars + 448
 
+feature_PAT	= vars + 975	; 1byte, =1 if supported by BSP, Intel chapter 11.12.2 IA32_PAT MSR
+				;     3bit index = PAT,PCD,PWT bits must be encoded in the page-table
+vbeLfb_ptr	= vars + 976
 pciDevs_cnt	= vars + 980	; 4bytes
 memMap_cnt2	= vars + 986	; 4bytes
 tscBits 	= vars + 990	; 16bytes, check individual bits in a byte and remember bits that never change

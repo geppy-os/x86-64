@@ -33,19 +33,57 @@ define PG_ZERO_ONACCESS (1 shl ?)
 define PG_ALLOC_USER	(1 shl ?)	; ?
 define PG_XD		(1 shl 63)
 
-define FUNC_ALLOCLINADDR	0
-define FUNC_MEMSETFLAGS 	1
+; memory caching related
+define IA32_PAT 	0x277
+define PG_PWT		(1 shl 3)
+define PG_PCD		(1 shl 4)
+define PG_PAT		(1 shl 7)
+define PG_MEM_UC
+define PG_MEM_WB
 
+
+struct RECT
+  left		dd ?
+  top		dd ?
+  right 	dd ?
+  bottom	dd ?
+ends
+
+struct RECTw
+  left		dw ?
+  top		dw ?
+  right 	dw ?
+  bottom	dw ?
+ends
+
+struct PCI
+  addr		dd ?
+  devVend	dd ?
+  classcode	dd ?
+  offset12	dd ?
+  barIndex	dw ?
+  barMask	dw ?
+ends
 
 struct VBE
   width 	dw ?
   height	dw ?
   lfb		dd ?
-  bps		dw ?	; bytes per scanline
-  bpp		db ?	; bits per pixel
+  bps		dw ?		; bytes per scanline
+  bpp		db ?		; bits per pixel
   clrMode	db ?
   modeNumber	dw ?
-  dummy 	dw ?
+  dummy 	db ?
+  bytesPerPx	db ?
+ends
+
+struct DRAWBUFF
+  ptr		dq ?
+  width 	dd ?
+  height	dd ?
+  bpl		dd ?		; bytes per line
+  bpp		dd ?		; bytes per pixel
+  clip		RECT
 ends
 
 ;--------------------------------------------------------------------------------------------------

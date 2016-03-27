@@ -383,20 +383,13 @@ lapicT_calcSpeed:
 	neg	edi
 	neg	esi
 	neg	ebp
-
-	reg	rax, 84f
-	reg	rdi, 84f
-	reg	rsi, 84f
-	reg	rbp, 84f
-
 	add	rax, rsi
 	add	rdi, rbp
 	add	rax, rdi
-	shr	rax, 1
+	shr	rax, 1			; divide by 4 and round up
 	adc	rax, 0
 	shr	rax, 1
 	adc	rax, 0
-	reg	rax, 84f
 
 	;--- calculate for 1ms ----
 
@@ -405,7 +398,7 @@ lapicT_calcSpeed:
 
 	mov	edi, 1953125
 	xor	edx, edx
-	div	rdi		; eax = number of lapicT ticks each millisecond for the divider of 2
+	div	rdi			; eax = # of lapicT ticks each millisecond for the divider of 2
 
 	xor	edi, edi
 	not	edi
@@ -416,7 +409,6 @@ lapicT_calcSpeed:
 	shl	rsi, 32
 	or	rax, rsi
 	mov	[lapicT_ms], rax
-	reg	rax, 106f
 
 	;--- calculate for 1us ----  (1ms = 1000us)
 
@@ -426,7 +418,7 @@ lapicT_calcSpeed:
 
 	mov	esi, 1953125 * 1000
 	xor	edx, edx
-	div	rsi		; eax = number of lapicT ticks each microsecond for the divider of 2
+	div	rsi			; eax = # of lapicT ticks each microsecond for the divider of 2
 	mov	rsi, rdx
 	test	rax, rax
 	jz	k64err
@@ -434,7 +426,6 @@ lapicT_calcSpeed:
 	shl	rsi, 32
 	or	rax, rsi
 	mov	[lapicT_us], rax
-	reg	rax, 106f
 
 	pop	rbp rdi rsi rdx rcx rax
 	ret

@@ -198,8 +198,8 @@ acpi_parse_MADT:
 	reg	rax, 403
 	mov	ecx, [r8 + 4]		; GIN (GlobIntNum)
 	shr	eax, 24 		; al = isa irq
-	;reg	 rcx, 404
-	;reg	 rax, 405
+	reg	rcx, 404
+	reg	rax, 405
 	imul	edi, eax, 20
 	mov	[r9 + rdi], ecx
 

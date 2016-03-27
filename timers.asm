@@ -114,7 +114,7 @@ timer_in:
 
 	mov	edi, [qword lapic + LAPICT_INIT]
 	sub	edi, [qword lapic + LAPICT_CURRENT]	; init_0 - current_? = 0
-reg rdi, 10c2
+;reg rdi, 10c2
 	add	[lapicT_time], edi
 	jnc	@f
 
@@ -132,6 +132,7 @@ reg rdi, 10c2
 
 	;-------------------------------------------------------------------------------------------
 .ok:	and	dword [qword lapic + LAPICT], not (1 shl 16)
+
 	clc
 @@:	call	resumeThreadSw
 	pop	rbx rbp rdi rsi rcx rdx rax

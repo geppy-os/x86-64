@@ -31,8 +31,25 @@ bios_boot:
 	mov	[gs:max_pci_bus], cl
 	;reg	 ecx
 
+
+	push	gs
+	pop	es
+	xor	eax, eax
+	mov	edi, acpi_mcfg
+	mov	ecx, (vbe_temp2 - acpi_mcfg)/4+1
+	rep	stosd
+
+	; TODO: don't forget checksum and redesign starting "org"
+
+	; need save/restore configuration (for rotated sceen as I am used to)
+
 	; get EBDA mem
-	mov	dword [gs:ebda_mem], 639*1024
+	clc
+	int	0x12
+	sti
+	movzx	eax, ax
+	imul	eax, 1024
+	mov	dword [gs:ebda_mem], eax
 
 ;===================================================================================================
 	push	gs gs
@@ -346,21 +363,20 @@ bios_boot:
 	jb	.vbeModes
 	cmp	cx, 768
 	jb	.vbeModes
-	cmp	bl, 16
-	jb	.vbeModes
 	cmp	bh, 6				; direct color
 	jz	@f
 	cmp	bh, 4				; packed pixel
+	jnz	.vbeModes
+@@:	cmp	bl, 16
+	jz	@f
+	cmp	bl, 24
+	jz	@f
+	cmp	bl, 32
 	jnz	.vbeModes
 @@:
 	movzx	edi, byte [vidModes_cnt]
 	add	byte [vidModes_cnt], 1
 	imul	edi, sizeof.VBE
-
-	;add	 [cs:reg16.cursor], 4
-	;reg	 eax
-	;reg	 ecx
-	;reg	 ebx
 
 	mov	[vidModes + di + VBE.width], ax
 	mov	[vidModes + di + VBE.height], cx
@@ -369,7 +385,9 @@ bios_boot:
 	mov	[vidModes + di + VBE.bpp], bl
 	mov	[vidModes + di + VBE.clrMode], bh
 	mov	ax, [fs:si]
+	shr	bl, 3
 	bts	ax, 14
+	mov	[vidModes + di + VBE.bytesPerPx], bl
 	mov	[vidModes + di + VBE.modeNumber], ax
 
 	cmp	byte [vidModes_cnt], 126	; limit must be positive 1byte number
@@ -378,16 +396,21 @@ bios_boot:
 
 ;---------------------------------------------------------------------------------------------------
 .vbeModes_done:
-	jmp	.vid_setMode
+	mov	byte [vidModes_sel], -1
+	;jmp	 .vid_setTextMode
+	;jmp	 .vid_setMode
 
+	push	gs
+	pop	ds
 	movzx	eax, byte [vidModes_cnt]
 	mov	byte [vidModes_sel], 0
 
 .vid_table_entry_2:
 
-	movzx	ax, byte [vidModes_cnt] 	; TODO: 0 video modes ????
+	movzx	ax, byte [vidModes_cnt]
 	sub	ax, 1
 	jc	.enter_pmode
+
 	cmp	byte [vidModes_sel], 0
 	jge	@f
 	mov	byte [vidModes_sel], 0
@@ -398,41 +421,54 @@ bios_boot:
 	mov	ax, 3
 	int	0x10
 
-	mov	dx, -1
-	mov	bx, 16+(80*10)
+	mov	edx, 0xff
+	mov	ebx, 16+(80*12)
 	push	0xb800
 	pop	es
-	push	dword 0x4f004f00
+	pushd	dword 0x4f004f00		; text & background colors for selections
+
+
+	; display message to choose videmodes
+	xor	ecx, ecx
+	mov	edi, 8+160*2
+@@:	mov	al, [cs:_vidModeMsg + ecx]
+	mov	ah, [ss:esp+1]
+	inc	cx
+	stosw
+	cmp	cx, _vidModeMsgLen
+	jb	@b
+
 
 .vid_table_entry:
-	inc	dx
+	inc	dl
 	cmp	[vidModes_cnt], dl
 	jbe	.vid_waitForKey
 
-	mov	si, dx
+	movzx	esi, dl
 	imul	si, sizeof.VBE
 	add	si, vidModes
 
 	mov	eax, (0xf shl 24) + (0xf shl 8)
 	cmp	[vidModes_sel], dl
 	jnz	@f
-	or	eax, [esp]
+	or	eax, [ss:esp]
 @@:	mov	dword [es:bx-10], eax
 	mov	dword [es:bx-6], eax
 	mov	dword [es:bx-2], eax
 	mov	dword [es:bx+2], eax
 	mov	dword [es:bx+6], eax
 	mov	dword [es:bx+10], eax
+	mov	dword [es:bx+28], eax
 
 	or	word [es:bx+4], 'x'+(0xf shl 8)
 
 	mov	di, bx
-	push	word [esp]
+	push	word [ss:esp]
 	push	[si + VBE.width]
 	call	.toAsciiDec
 
 	lea	di, [bx+18]
-	push	word [esp]
+	push	word [ss:esp]
 	push	[si + VBE.height]
 	call	.toAsciiDec
 
@@ -451,7 +487,7 @@ bios_boot:
 	mov	eax, (0xf shl 24) + (' ' shl 16) + (0xf shl 8) + ' '
 	cmp	[vidModes_sel], dl
 	jnz	@f
-	or	eax, [esp]
+	or	eax, [ss:esp]
 @@:	mov	[es:ebx + 6 + ecx], eax
 	mov	[es:ebx + 10 + ecx], eax
 	mov	[es:ebx + 14 + ecx], eax
@@ -460,19 +496,36 @@ bios_boot:
 
 	lea	di, [bx+26]
 	movzx	ax, [si + VBE.bpp]
-	push	word [esp]
+	push	word [ss:esp]
 	push	ax
 	call	.toAsciiDec
 
+	; make multiple columns on screen
+	push	dx
+	inc	dx
+	mov	si, dx
+	movzx	eax, dx
+	xor	dx, dx
+	mov	cx, 16
+	div	cx
+	pop	dx
+	test	si, 15
+	jnz	@f
+	imul	ax, 48
+	mov	ebx, 16+(80*12)
+	add	bx, ax
+	jmp	.vid_table_entry
+@@:
 	add	bx, 160
 	jmp	.vid_table_entry
 
 .vid_waitForKey:
-	add	sp, 4
+	add	esp, 4
 
+	sti
 	xor	ax, ax
 	int	0x16
-
+	sti
 
 	cmp	ah, 0x48		; up arrow
 	jnz	@f
@@ -490,12 +543,26 @@ bios_boot:
 	jz	.vid_setMode
 	jmp	.vid_waitForKey
 
+;---------------------------------------------------------------------------------------------------
 .vid_setMode:
+	movzx	esi, byte [vidModes_sel]
+	cmp	esi, 0xff
+	jz	.vid_setTextMode
 
+	imul	esi, sizeof.VBE
+	movzx	ebx, [vidModes + esi + VBE.modeNumber]
+	xor	ecx, ecx
+	mov	eax, 0x4f02
+	int	0x10
+	sti
+	;test	 ah, ah
+	jmp	@f
+
+.vid_setTextMode:
 	mov	ax, 3
 	int	0x10
-
-
+	sti
+@@:
 
 ;	 mov	 al,10001b		 ; begin PIC 1 initialization
 ;	 out	 0x20, al
@@ -573,10 +640,11 @@ bios_boot:
 
 ;===================================================================================================
 .toAsciiDec:
-	push	bx ax dx cx 10
-	mov	cx, [esp + 12]
-	mov	bx, [esp + 14]
+	push	ebx ax dx cx 10
+	mov	cx, [esp + 14]
+	mov	bx, [esp + 16]
 	pushfd
+
 	std
 	xor	bp, bp		; BP - how many digits
 	cmp	[vidModes_sel], dl
@@ -596,7 +664,7 @@ bios_boot:
 	jnz	@b
 
 	popfd
-	pop	dx cx dx ax bx
+	pop	dx cx dx ax ebx
 	ret	4
 
 ;===================================================================================================
@@ -648,4 +716,7 @@ GDT_RMode:
 	dw 0FFFFh,0,9A00h,0AFh		    ; 64-bit code desciptor
 
   .limit = $-GDT_RMode-1
+
+_vidModeMsg db "  Please use Arrow keys to select video mode. Then press ENTER  "
+_vidModeMsgLen = $-_vidModeMsg
 

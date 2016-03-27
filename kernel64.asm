@@ -166,6 +166,11 @@ LMode:
 	mov	cr8, rax
 	sti
 
+	mov	r8d, 0x0a2
+	lea	r9, [ps2_mouse_handler]
+	mov	r12, 0x00'02	      ;timer may have been remapped
+	;call	 int_install
+
 	; init RTC and measure LapicTimer speed
 	;-------------------------------------------
 
@@ -174,39 +179,48 @@ LMode:
 	call	dev_install
 
 
-	; Wait for LAPIC Timer speed to be measured so that we can use timers
-	;---------------------------------------------------------------------
-	;     We can't put CPU to sleep as lapic timer will be suspended And there will be a slight
-	;     delay before timer returns to full speed as CPU is waking up.
-	;     A simple HLT instruction on modern CPUs will put CPU to noticebale sleep mode.
+; Wait for LAPIC Timer speed to be measured so that we can use timers
+;===================================================================================================
+;     We can't put CPU to sleep as lapic timer will be suspended And there will be a slight
+;     delay before timer returns to full speed as CPU is waking up.
+;     A simple HLT instruction on modern CPUs will put CPU to noticebale sleep mode.
 
 
-	;call	 rand_calcTSC
+	call	tsc_calibration
 	call	pci_figureMMIO
-	;call	 rand_calcTSC	; if user not moving mouse then use TSC - next best thing
+	call	tsc_calibration
+	; if user not moving mouse then use TSC - next best thing low bits of a fast timer
 
+
+@@:	; need some minimum memory fragmented
 	call	fragmentRAM
-@@:	call	fragmentRAM
 	jc	k64err				; not enough memory
-	cmp	dword [qword memTotal], 0x2000	; need min 128MB (3 function calls is required)
+	cmp	dword [qword memTotal], 0x2000	; need min 128MB (min 3 function calls is required)
 	jb	@b
-@@:
+
+
+@@:	; need to supply some minimum memory for #PF handler
 	call	update_PF_ram
 	cmp	word [PF_pages + 6], 0x800	; min 32MB for #PF, one call gets us max 15.9MB
 	jb	@b
 
+
+	; and we need some min mem to use for paging structures
 	call	refill_pagingRam
-	;call	 rand_calcTSC
-@@:
-	cmp	byte [rtc_job], 0
+	call	tsc_calibration
+
+
+	; and now we are waiting for lapic timer speed to be measured
+@@:	cmp	byte [rtc_job], 0
 	jz	.calc_timer_speed
 	call	fragmentRAM
 	jmp	@b
 
+;===================================================================================================
 .calc_timer_speed:
 	call	lapicT_calcSpeed
 	call	pci_getBARs			; skips Bridges since we are using RTC
-	;call	 rand_calcTSC
+	call	tsc_calibration
 
 
 
@@ -230,14 +244,7 @@ LMode:
 	mov	qword [lapicT_time], 0
 
 
-
-	;mov	 dword [lapicT_time], 0xffff'ffff - 0x19000
-
-
-	;mov	 dword [qword lapic + LAPICT_INIT], 0x202
-
-
-
+	mov	dword [qword lapic + LAPICT_INIT], 0x202
 
 	mov	r8d, 1000*0x35+10
 	lea	r9, [timer1]
@@ -248,44 +255,94 @@ LMode:
 
 	mov	r8d, 1000*0x39+10
 	lea	r9, [timer2]
+	mov	r12, 0x3333333333333333
+	mov	r13, 0x4444444444444444
 	call	timer_in
 
 
 
-
-
-	;mov	 r8d, 1000*0x37+10
-	;lea	 r9, [timer_entry]
-	;call	 timer_in
-
-	mov	r8d, 1000*0x33+10
-	lea	r9, [timer1]
-	mov	r12, 0x4444
-	mov	r13, 0x5555 shl 48
-	;call	 timer_in
+	call	ps2_init
 
 
 
-
-
-
-	;mov	 r8, PG_USER
-	;mov	 r9d, 64
-	;call	 thread_create
-	;jc	 k64err
-
-	;mov	 [qword  512*1024*1024*1024*2 + 0x200000-8], rax
-
-
-
-	mov	eax, [lapicT_ms]
-	reg	rax, 81e
-	mov	eax, [lapicT_us]
-	reg	rax, 81e
+	mov	rax, [lapicT_ms]
+	reg	rax, 101e
+	mov	rax, [lapicT_us]
+	reg	rax, 101e
 	mov	rax, [PF_pages]
 	reg	rax, 101e
 	mov	eax, [qword memTotal]
 	reg	rax, 101e
+
+
+
+	mov	r8, -1
+	call	g2d_init_screen
+	jc	.55
+
+	call	mouse_draw
+
+	; need screen rotaion
+	; need 16,24,32 bits support, to copy to lfb
+
+
+	movzx	esi, byte [qword vidModes_sel + rmData]
+	imul	esi, sizeof.VBE
+	movzx	ecx, [vidModes + rmData + esi + VBE.bps]
+	movzx	eax, [vidModes + rmData + esi + VBE.bytesPerPx]
+
+
+	mov	r8d, [qword vbeLfb_ptr + rmData]
+	mov	r9, 768
+@@:	mov	dword [r8], 0xff0000
+	add	r8, 4
+	add	r8, rcx
+	sub	r9, 1
+	jnz	@b
+
+	mov	r8d, [qword vbeLfb_ptr + rmData]
+	mov	r9, 1024
+.3:	mov	dword [r8], 0xff00
+	add	r8, 4
+	test	r8, 7
+	jnz	@f
+	add	r8, rcx
+@@:
+	sub	r9, 1
+	jnz	.3
+
+
+
+	sub	rsp, 16
+	mov	r8, rsp
+	mov	word [r8], 0x21 		; x1
+	mov	word [r8 + 2], 2
+	mov	word [r8 + 4], 48	     ; width
+	mov	word [r8 + 6], 15
+	mov	dword [r8 + 8], 0xffb000
+	mov	word [r8 + 12], 0
+	mov	r9, screen
+	;mov	 [r9 + DRAWBUFF.clip.left], 0
+	;mov	 [r9 + DRAWBUFF.clip.top], 0
+	;mov	 [r9 + DRAWBUFF.clip.right], 1024
+	;mov	 [r9 + DRAWBUFF.clip.bottom], 768
+
+	call	g2d_fillRect
+	add	rsp, 16
+
+
+
+.55:
+
+
+
+
+
+
+	;mov	 eax, 5
+	;sub	 eax, 3
+	;reg	 rax, 804
+	;jc	 k64err
 
 
 ;===================================================================================================
@@ -301,6 +358,16 @@ os_loop:
 	add	byte [qword 160*24], 1
 
 
+	cli
+	mov	eax, [_y]
+	shl	eax, 16
+	mov	ax, [_x]
+	mov	ecx, [qword reg32.cursor]
+	mov	[qword reg32.cursor], 84
+	reg	rax, 80c
+	mov	[qword reg32.cursor], ecx
+	sti
+
 
 
 	cmp	dword [lapicT_time], 0xde00'0000
@@ -311,6 +378,8 @@ os_loop:
 
 	mov	r8d, 1000*999+10
 	lea	r9, [timer1]
+	mov	r12, 0x6666666666666666
+	mov	r13, 0x7777777777777777
 	call	timer_in
 
 @@:
@@ -323,6 +392,7 @@ os_loop:
 	;-----------------------------------------------------------------------------------
 	cmp	dword [qword lapic + LAPICT_INIT], 0
 	; now we get interrupt that triggers thread resume from sleep and we got HLT here
+	; not an issue actually
 	jnz	@f
 	mov	rax, cr8
 	hlt
@@ -334,29 +404,42 @@ os_loop:
 ;	 [rsp + 8]  = user data1
 ;	 [rsp + 16] = user data2
 ;	 [rsp + 24] = undefined (time in ?microseconds at which this timer event was scheduled)
+;---------------------------------------------------------------------------------------------------
+; timer handler need to save/restore all register used
+
 
 	align 8
 timer1:
+.sz=16
+	pushf
+	push	rax
 	add	dword [qword 160*24+4], 1
 
-	mov	rax, [rsp + 8]
+	mov	rax, [rsp + 8+.sz]
 	reg	rax, 1006
-	mov	rax, [rsp + 16]
+	mov	rax, [rsp + 16+.sz]
 	reg	rax, 1006
 
+	pop	rax
+	popf
 	add	rsp, [rsp]
 	ret
 
 
 	align 8
 timer2:
+.sz=16
+	pushf
+	push	rax
 	add	dword [qword 160*24+6], 1
 
-	mov	rax, [rsp + 8]
+	mov	rax, [rsp + 8+.sz]
 	reg	rax, 1005
-	mov	rax, [rsp + 16]
+	mov	rax, [rsp + 16+.sz]
 	reg	rax, 1005
 
+	pop	rax
+	popf
 	add	rsp, [rsp]
 	ret
 

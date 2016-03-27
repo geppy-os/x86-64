@@ -16,8 +16,9 @@ ata0-slave: type=disk, translation=auto, status=ejected
 
 boot: disk
 
-log: _bochs_out.txt
+log: _bochsOut.txt
 
-mouse: enabled=0
+keyboard: type=at
+mouse: type=imps2, enabled=0
 
 

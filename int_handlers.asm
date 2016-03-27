@@ -1,7 +1,22 @@
 
 int_handlers:
 
-include "int_PF.asm"
+	include "int_PF.asm"
+
+;===================================================================================================
+
+  align 8
+int_GP:
+	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('G' shl 16)
+	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('_' shl 16)
+
+
+	mov	eax, [rsp]
+	jmp	$
+
+	iretq
+
+;===================================================================================================
 
   align 8
 int_DE:
@@ -111,17 +126,6 @@ int_SS:
 
 
   align 8
-int_GP:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('G' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('_' shl 16)
-
-
-	mov	eax, [rsp]
-	jmp	$
-
-	iretq
-
-  align 8
 int_MF:
 	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('M' shl 16)
 	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'F' + ('_' shl 16)
@@ -184,3 +188,12 @@ int_dummy2:
   align 8
 int_lapicSpurious:
 	iretq
+
+  align 8
+int_spurious_pic7:
+	iretq
+
+  align 8
+int_spurious_pic15:
+	iretq
+

@@ -1,5 +1,5 @@
 
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
 
@@ -108,8 +108,7 @@ mov r12d, 8
 ;===================================================================================================
 ; input: r8[7:0]    - vector in idt
 ;	 r8[11:8]   - IST
-;	 r9	    - address
-;	 r12	    - interrrupt info
+;	 r9	    - handler mem address
 ;	 r12[7:0]   - ioapic input
 ;	 r12[9:8]   - ioapic id
 ;	 r12[11:10]   = 0
@@ -138,8 +137,8 @@ int_install:
 ;===================================================================================================
 ; input: r8[7:0]   - vector in idt
 ;	 r8[11:8]  - IST
-;	 r9	   - address
-; return: r8 not modified
+;	 r9	   - handler mem address
+; return: input r8 not modified
 
 idt_setIrq:
 	push	rbx rcx r8 rax rdx

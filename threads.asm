@@ -315,7 +315,19 @@ thread_destroy:
 
 	align 8
 sleep:
+	push	rax
+	mov	rax, rsp
+	lea	r9, [.exit]
+	call	timer_in
+	jmp	$
+.exit:
+	mov	rsp, rax
+	mov	eax, [lapicT_time]
+	reg	rax, 100a
+	pop	rax
 	ret
+
+
 
 
 ;===================================================================================================
@@ -325,7 +337,7 @@ clone_pml4:
 	ret
 
 ;===================================================================================================
-; can not use CLI instruction until resumeThreadSw is called
+; can't use CLI instruction until resumeThreadSw is called
 
 	align 8
 noThreadSw:
@@ -338,7 +350,7 @@ noThreadSw:
 ; if we entered LapicT we start measurment there and restore in in resumeThreadSw
 
 ;===================================================================================================
-; can not use CLI instruction until resumeThreadSw is called
+; can't use CLI instruction until resumeThreadSw is called
 
 	align 8
 resumeThreadSw:
