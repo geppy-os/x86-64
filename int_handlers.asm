@@ -7,20 +7,13 @@ int_handlers:
 
   align 8
 int_GP:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('G' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('_' shl 16)
-
-
-	mov	eax, [rsp]
-	jmp	$
-
-	iretq
+	jmp	k64err.GP
 
 ;===================================================================================================
 
   align 8
 int_DE:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('D' shl 16)
+	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '+' + ('D' shl 16)
 	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'E' + ('_' shl 16)
 	jmp $
 	iretq
@@ -91,11 +84,8 @@ int_NM:
 
   align 8
 int_DF:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('D' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'F' + ('_' shl 16)
-	jmp $
+	jmp	k64err.DF
 
-	iretq
 
 
   align 8

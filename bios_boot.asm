@@ -367,8 +367,8 @@ bios_boot:
 	jz	@f
 	cmp	bh, 4				; packed pixel
 	jnz	.vbeModes
-@@:	cmp	bl, 16
-	jz	@f
+@@:	;cmp	 bl, 16
+	;jz	 @f
 	cmp	bl, 24
 	jz	@f
 	cmp	bl, 32

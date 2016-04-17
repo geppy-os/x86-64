@@ -11,26 +11,29 @@
 ; so it turns out that each thread gets its own entry in pml4 (with entirely private PDP)
 ; and we can have max 256 (128TB / 512GB) threads per CPU - but we'll make it per system
 ; max 256 threads per all running CPUs :(
-; a thread id easily identifies which 512GB chunk in use by thread
-; one thread is meant to be separate program
-; later, number of threads can be extended by using second portion of 256TB address space
+; a thread ID is a 512GB chunk index used by thread
+; one thread is meant to be separate program/application
 ; any logic within the thread (aka user_thread) is to be done by means of asynchronyous processing
 ; we'll see how it turns out
 ;--------------------------------------------------------------------------------------------------
-; + 0KB
-;	4kb registers
+;registers:
+;   +0kb   4kb registers
+
+;timer_regs:
+;   +4kb   4kb registers
+
+;user_data_rw:
+;   +8kb   4kb pointers to dynamically allocated ram, thread state, interrupt info, messages
 ;
-;	4kb pointers to dynamically allocated ram, thread state, interrupt info, messages
+;   +12kb  4kb Separate PML4 table
 ;
-;	4kb Separate PML4 table
+;  +16kb   4kb PDP - responsible for 512GB, no more than 1 PDP per thread so we keep it here
 ;
-;	4kb PDP - responsible for 512GB, no more than 1 PDP per thread so we keep it here
+;  +20kb   empty, not allocated, kill thread if accessed
 ;
-; +16	empty, not allocated, kill thread if accessed
+;  +32kb   kernel stack to be used by kernel while doing job on behalf of the thread
 ;
-; +32	kernel stack to be used by kernel while doing job on behalf of the thread
-;
-; +64KB code starts for all threads except kernel system thread
+;  +64KB   code starts for all threads except kernel system thread
 ;
 ;--------------------------------------------------------------------------------------------------
 ; KBD buffer needs to be per visible window (a rectangle) -
@@ -47,24 +50,12 @@
 ; predefined entry in PML4. When we create new thread - we use correct linear addr right away.
 ; There is not remapping after thread was created and before its internal initialization functions
 ; is about to run.
-; Threads are expected to have position independed code.
 
-; We don't delete PML4 entries beloning to other threads from  system thread pml4.
-; Simple cr3 reload gives sys thread access to all changes that user thread did (same PDP at all times)
-; All user threads are always mapped into sys process.
-; If sys thread does smth on behalf of user thread without switching to user thread pml4
-;					       then simple cr3 reload provides user thread all changes
-; However, before we do anything on behalf of a thread we try to change to its PML4 (CR3 reload)
-; And we check if shared system PML4 entries need to be updated
-
-
-; we could have separate 512GB for libraries where code shared among CPUs and data is per thread per CPU
-; we could start libraries from lower addrs(even lowest 512GB meant for ring0 only)
-;									 and threads from top addrs
-
-
+; Ring3 threads can't be mapped all at the same time when a ring3 thread is running
+; When system thread running and needs access to several ring3 threads - it can create another PML4
+;   with multiple ring3 thread mappings
 ;===================================================================================================
-; Timers
+; Timers / Events
 ;===================================================================================================
 ; Why does user thread need a fast timer ? It doesn't ! Min granularity is 1 second, to be adjusted.
 
@@ -76,12 +67,31 @@
 ;			   50			     20     ms
 ;			   66			     15.625 ms
 
-; with screen refresh, (game) logic will be updated as user sees results on screen and not at mad speeds
+; with screen refresh, game logic will be updated as user sees results on screen and not at mad speeds
+; Movies/animations may need fast timers.
 ; As with everything else - its the events that trigger.
 
+; To exchange bitmap frames(movies)
+;      user XORs 4byte variable at the end of 4KB
+;      kernel XORs 4byte var at the beginning of next 4KB
+;      when user sees that 2 vars are equals (8byte cmpxchg) - it supplies next frame and xor the 4b var
 
+;--------------------------------------------------------------------------------------------------
+; new event can't be entered until current one finishes
+; if new event happens while current event in progress - we put new event on a list/array
+; event handler exits to predefined code that checks for more events
 
+; event entry:
+;-------------
+;  +0  low 4bit = number of inputs, top 4bit = event id
+;  +1  7byte handler addr (always bellow 128TB)
+;  +8  0 or more inputs... , 8byte each
 
-
+; timer event can interrupt any event except another timer
+; timer handler always exits to the address supplied by lapic timer handler (quit thread if was sleeping)
+; timer handler needs to save/restore all registers used on its own
+; when we are done with timer handler - we SYSCALL and tell that we can process next timer
+;    use CLI/IRET(sti) to clear timer event bit and exit to previously executing code on the same thread
+;===================================================================================================
 
 

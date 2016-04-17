@@ -10,12 +10,13 @@ int_PF:
 	mov	[rsp + 7*8], rbp
 	sub	rsp, 24
 
-	mov	rbp, cr2
 	mov	r15, [sp_PF_r15]
+	mov	rbp, cr2
+	shl	r15, 16
 
 	; in case somebody made a mess writing this handler (2nd #PF while executing this handler)
 	cmp	byte [sp_PF_2nd], 0x5a
-	jz	.2nd_PF
+	jz	k64err.pf_2nd_PF
 	mov	byte [sp_PF_2nd], 0x5a
 
 	;mov	 dword [qword 32], (0x4f shl 24) + (0x4f  shl 8) + '_' + ('P' shl 16)
@@ -28,15 +29,14 @@ int_PF:
 
 	mov	ecx, [sp_PF_pages]
 	mov	ebx, [sp_PF_pages + 4]
-	shl	r15, 16
+
 
 	; All paging tables are always mapped
 	; They are never unmapped even if PT entries are not beeing used for a long time
 
 	; if addr belongs to paging hierarchy (top bits are 1s 0xffff... ) then kernel panic
-	; its additional sanity check, there was an issue with Bochs emulator
 	bt	rbp, 63
-	jc	k64err
+	jc	k64err.pf_paging_addr
 
 	ror	rbp, 39
 	mov	rsi, 0xffff'ffff'ffff'fe00
@@ -48,7 +48,7 @@ int_PF:
 	rol	rbp, 9			   ; 1
 	xor	edi, 1				; invert Present flag
 	test	edi, 1000'0001b 		; PS(pageSize) must be 0, P(present) must be 1
-	jnz	.invalid_PML4e
+	jnz	k64err.pf_invalid_PML4e
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PD address from PDP entry
@@ -57,7 +57,7 @@ int_PF:
 	rol	rbp, 9			   ; 2
 	xor	edi, 1
 	test	edi, 1000'0001b
-	jnz	.invalid_PDPe
+	jnz	k64err.pf_invalid_PDPe
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PT address from PD entry
@@ -66,17 +66,17 @@ int_PF:
 	rol	rbp, 9			   ; 3
 	xor	edi, 1
 	test	edi, 1000'0001b
-	jnz	.invalid_PDe
+	jnz	k64err.pf_invalid_PDe
 
 	or	rsi, rbp			; RSI = PT entry (points to 4 KB)
 	shr	rsi, 2				;	align to a multiple of 4
 	shl	rsi, 2				;	we operate in 16KB chunks
 	mov	rdi, [rsi*8]
-	;reg	 rdi, 101f
+	reg	rdi, 107f
 	test	edi, 1				; Must be zero. Issue (=1) happens on Bochs-2.68 emulator
-	jnz	k64err				;    but error code reports correct "page not present"
+	jnz	k64err.P_0			;    but error code reports correct "page not present"
 	test	edi, PG_ALLOC
-	jz	.notAllocated
+	jz	k64err.pf_notAllocated
 
 	; check if we have valid page (1byte value) selected at "PF_pages+1"
 	mov	edi, ecx
@@ -87,7 +87,7 @@ int_PF:
 	not	rdi
 	bsf	rax, rdi
 	cmp	eax, 7
-	ja	.noHostPagesMapped
+	ja	k64err.pf_noHostPagesMapped
 	mov	ch, al
 	shl	eax, 12
 	mov	edi, [PF_ram + rax]		; size
@@ -161,63 +161,10 @@ int_PF:
 	pop	rbx rdi rsi rcx rax r15 r8 rbp
 	iretq
 
-;Error Code
-
-;SS
-;RSP
-
-;RIP
-;CS
-;RFLAGS
 
 
-; it can be that no pages are mapped but size is not zero at "PF_pages"
-; if this case 'alloc_ram' is allocating ram from PF pool
+; ?? it can be that no pages are mapped but size is not zero at "PF_pages"
+; ?? if this case 'alloc_ram' is in the process of allocating ram from PF pool
 
 
-; #PF happened while #PF handler was executing
-.2nd_PF:
-	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + '2' + ('n' shl 16)
-	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'd' + ('!' shl 16)
-	reg	rbp, 10cf
-	jmp	.err
 
-; PG_ALLOC bit is not set
-.notAllocated:
-	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'A' + ('L' shl 16)
-	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'O' + ('C' shl 16)
-	jmp	.err
-
-; bitmask in "PF_pages" is empty (all 8 bits set)
-.noHostPagesMapped:
-	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + '-' + ('H' shl 16)
-	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 's' + ('T' shl 16)
-	jmp	.err
-
-; no PageDirectoryPointer (512GB chunk)
-.invalid_PML4e:
-	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('M' shl 16)
-	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'L' + ('e' shl 16)
-	jmp	.err
-
-; no PageDirectory (1GB chunk)
-.invalid_PDPe:
-	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('D' shl 16)
-	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('e' shl 16)
-	jmp	.err
-
-; no PageTable (2MB chunk)
-.invalid_PDe:
-	mov	dword [qword 22], (0x4f shl 24) + (0x4f  shl 8) + 'P' + ('D' shl 16)
-	mov	dword [qword 26], (0x4f shl 24) + (0x4f  shl 8) + 'e' + (' ' shl 16)
-	jmp	.err
-
-.err:
-	mov	dword [qword 32], (0x4f shl 24) + (0x4f  shl 8) + '_' + ('P' shl 16)
-	mov	dword [qword 36], (0x4f shl 24) + (0x4f  shl 8) + 'F' + ('_' shl 16)
-	mov	esi, [qword reg32.cursor]
-	mov	dword [qword reg32.cursor], 42
-	mov	rbp, cr2
-	reg	rbp, 104f
-	mov	[qword reg32.cursor], esi
-	jmp	 $

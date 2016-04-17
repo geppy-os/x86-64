@@ -4,6 +4,67 @@
 
 
 ;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+; timer handler needs to restore all registers used (saving is done by lapicTimer)
+
+	align 8
+timer_exit:
+	cli						; maybe can use noThreadSw here
+	mov	rax, cr8				;   and cli at the end, before iret
+	sub	rsp, 40
+
+	mov	r15, 0x400000
+
+	movzx	r13d, word [lapicT_currTID]
+	imul	r13, 0x10000 * 512
+	lea	rax, [registers]
+	test	r13, r13
+	cmovz	r13, rax
+
+	btr	dword [r13 + 8192 + event_mask], 0
+
+	fxrstor [r13 + 4096 + 192]
+
+	mov	rdi, [r13 + 4096]
+	mov	rsi, [r13 + 4096 + 8]
+	mov	rbx, [r13 + 4096 + 16]
+	mov	rbp, [r13 + 4096 + 24]
+	mov	rdx, [r13 + 4096 + 32]
+	mov	[rsp], rdi				; rip
+	mov	[rsp + 8], rsi				; cs
+	mov	[rsp + 16], rbx 			; rflags
+	mov	[rsp + 24], rbp 			; rsp
+	mov	[rsp + 32], rdx 			; ss
+
+	mov	r14, [r13 + 4096 + 40]
+	mov	rdi, [r13 + 4096 + 48]
+	mov	rsi, [r13 + 4096 + 56]
+	mov	rbx, [r13 + 4096 + 64]
+	mov	rbp, [r13 + 4096 + 72]
+	mov	rdx, [r13 + 4096 + 80]
+	mov	r8, [r13 + 4096 + 88]
+	mov	r9, [r13 + 4096 + 96]
+	mov	r10, [r13 + 4096 + 104]
+	mov	r11, [r13 + 4096 + 112]
+	mov	r12, [r13 + 4096 + 120]
+	mov	rcx, [r13 + 4096 + 128]
+	mov	rax, [r13 + 4096 + 136]
+	mov	r15, [r13 + 4096 + 152]
+	mov	r13, [r13 + 4096 + 144]
+
+	iretq
+
+
+	; ?????
+	; timer threads may be sleeping
+	; we need to make sure they are on ready to run priority list, since 4ms won't be enough
+	; if thread was sleeping - it can run full timeslice
+	;
+	; for device drivers we put thread on running list, so that next thread
+	; switch goes to this thread (if thread requests)
+
+;===================================================================================================
 ;   timer_at
 ;===================================================================================================
 ; input: r8  - time in special format (month/day
@@ -29,6 +90,8 @@ timer_at:
 ;	       OR 0 if suspend process and resume after timer fires (r12,r13 ignored in this case)
 ;	 r12 - any user data #1
 ;	 r13 - any user data #2
+
+;	 r14 - reference(supplied by user) lapicT_time, 4bytes
 
 	align 8
 timer_in:

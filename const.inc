@@ -33,11 +33,46 @@ define PG_ZERO_ONACCESS (1 shl ?)
 define PG_ALLOC_USER	(1 shl ?)	; ?
 define PG_XD		(1 shl 63)
 
-; memory caching related
+
 define IA32_PAT 	0x277
 define PG_PWT		(1 shl 3)
 define PG_PCD		(1 shl 4)
-define PG_PAT		(1 shl 7)
+define PG_PAT		(1 shl 7)	; conflicts with PG_S (2MB & 1GB pages)
+					;	 Intel ch 11.12.4 (Programming the PAT)
+					;   and have WC mem for VBE LFB that uses 4KB & 2MB pages
+define IA32_MTRR_PHYSBASE	0x200
+define IA32_MTRR_PHYSMASK0	0x201
+define IA32_MTRR_PHYSBASE1	0x202
+define IA32_MTRR_PHYSMASK1	0x203
+define IA32_MTRR_PHYSBASE2	0x204
+define IA32_MTRR_PHYSMASK2	0x205
+define IA32_MTRR_PHYSBASE3	0x206
+define IA32_MTRR_PHYSMASK3	0x207
+define IA32_MTRR_PHYSBASE4	0x208
+define IA32_MTRR_PHYSMASK4	0x209
+define IA32_MTRR_PHYSBASE5	0x20A
+define IA32_MTRR_PHYSMASK5	0x20B
+define IA32_MTRR_PHYSBASE6	0x20C
+define IA32_MTRR_PHYSMASK6	0x20D
+define IA32_MTRR_PHYSBASE7	0x20E
+define IA32_MTRR_PHYSMASK7	0x20F
+define IA32_MTRR_PHYSBASE8	0x210
+define IA32_MTRR_PHYSMASK8	0x211
+define IA32_MTRR_PHYSBASE9	0x212
+define IA32_MTRR_PHYSMASK9	0x213
+define IA32_MTRR_FIX64K_	0x250
+define IA32_MTRR_FIX16K_	0x258
+define IA32_MTRR_FIX16K_	0x259
+define IA32_MTRR_FIX4K_C0000	0x268
+define IA32_MTRR_FIX4K_C8000	0x269
+define IA32_MTRR_FIX4K_D0000	0x26A
+define IA32_MTRR_FIX4K_D8000	0x26B
+define IA32_MTRR_FIX4K_E0000	0x26C
+define IA32_MTRR_FIX4K_E8000	0x26D
+define IA32_MTRR_FIX4K_F0000	0x26E
+define IA32_MTRR_FIX4K_F8000	0x26F
+define IA32_MTRR_DEF_TYPE	0x2FF
+
 define PG_MEM_UC
 define PG_MEM_WB
 
@@ -54,6 +89,13 @@ struct RECTw
   top		dw ?
   right 	dw ?
   bottom	dw ?
+ends
+
+struct BOX
+  x		dd ?
+  y		dd ?
+  width 	dd ?
+  height	dd ?
 ends
 
 struct PCI
@@ -77,6 +119,7 @@ struct VBE
   bytesPerPx	db ?
 ends
 
+; 40bytes
 struct DRAWBUFF
   ptr		dq ?
   width 	dd ?

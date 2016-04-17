@@ -4,107 +4,177 @@
 
 
 ;===================================================================================================
-; input: r8[7:0]   - zero or desired vector in IDT (optional)
-;	 r8[11:8]  - IST
-;	 r8[12]    =1 if ISA, =0 if PCI
-;	 r8[13]      PCI: =1 if r9 contains bus/dev/classcode, =0 if r9 contains dev/vendor id
-;		     ISA: for ISA r9 always contains PNPID
-;	 r8[63:14] - reserved
-;	 r9	   - device id
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+; input: r8b  =0 if ISA, =1 if PCI
+;	 r9   - device id
 
+	align 8
 dev_install:
-	push	rbp rbx rax rcx rsi rdi
+	push	rax rcx rdi
 
-	; First, "dev_install" needs to load the driver from a disk IF necessary
-	;		   which adds an entry to the data structure we are about to parse
-	; Then we continue with our search bellow for the driver info.
-
-
-	; its either 3 or 4 byte PNP/ACPI ID
-	;---------------------------------------
-	; (TODO: or it can be non-ascii(no guarantee) PCI,
-	;    3byte classcode with leading non-ascii(guarantee) 0 byte
-	;    located on the other side comparing to 3byte "PNP" zero byte
-	;    We'll need multiple >>device<< entries as we want vendor specific extensions
-	;							   (for 'generic' vendors :)
+	and	r8d, 0xff
+	call	dev_find
+	mov	rax, r8
+	jc	k64err
 
 
-	bsr	rcx, r9
-	cmp	ecx, 56
-	setb	cl
-	shl	ecx, 3
-	shl	r9, cl
-	mov	ebp, r9d
-	shr	r9, 32			; device number (in ascii)	r9
-	shr	ebp, cl 		; vendor string (in ascii)	   ebp
+	; we have to figure how to distribute interrupts (in this function or somewhere else)
 
-	; look for vendor first
+	mov	ecx, [rax + 8]
+	cmp	cl, 1
+	jb	.ISA
+	jz	.PCI
+	jmp	.err
+.PCI:
+	jmp	.get_id
+.ISA:
+	mov	r8d, isaDevs
 
-	lea	rsi, [pnpName]
-	xor	ecx, ecx
-	add	ecx, [rsi]
-	jz	.err_noVendors
-	mov	rdi, rsi
-	add	rsi, 4
-@@:
-	lodsq
-	cmp	eax, ebp
-	jz	@f
-	sub	ecx, 1
-	jnz	@b
-	jmp	.err_noVendorInfo
-@@:
-	; then look for device for that vendor
 
-	shr	rax, 32
-	xor	ecx, ecx
-	add	rdi, rax
-	add	ecx, [rdi]
-	jz	.err_noDevs
-	add	rdi, 4
-@@:
-	cmp	[rdi], r9d
-	jz	@f
-	add	rdi, pnpName.sz
-	sub	ecx, 1
-	jnz	@b
-	jz	.err_noDevInfo
-@@:
 
-	mov	r9d, [rdi + 8]		; offset relative to LMode
-	mov	r12d, [rdi + 12]	; interrupt info
-mov r12d, 8
-	lea	rax, [LMode]
-	add	r9, rax
-	call	int_install		; input r8 remained unchanged thruought this function
+.get_id:
+	; calculate 2byte unique ID for the device driver
+	call	rand_tsc
+	mov	r12d, inst_devs_cnt
+	mov	r14d, inst_devs
+	mov	r13d, 1
+	xadd	[r12], r13d			; get 2byte array index
+	shl	r13d, 16
+	or	r8, r13 			; merge unique id with array index (4byte unique id)
+
+	mov	eax, [rax + 4]
+	lea	r9, [LMode]
+	add	rax, r9
+
+	; save unique id & device info address
+	shr	r13d, 16
+	imul	r13d, 12
+	mov	[r14 + r13], r8d
+	mov	[r14 + r13 + 4], rax
 
 	; call init function
-	mov	eax, [rdi + 4]
-	lea	rcx, [LMode]
-	add	rax, rcx
+	push	r8
 	call	rax
 
-.ok:	clc
+	clc
 .exit:
-	pop	rdi rsi rcx rax rbx rbp
+	pop	rdi rcx rax
 	ret
+.err:
+	stc
+	jmp	.exit
 
-;----------------------------------------
+; ISA IDE disk tells us which interrupt triggered (int handler needs input data)
+; and calls int_remove on unused interrupt vector
 
-; critical errors (incorrect code or data structures)
-.err_noDevs:
-	jmp	k64err
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+; return: r8 = pointer to device info
 
-; non-critical errors
-.err_noDevInfo:
-.err_noVendorInfo:
-.err_noVendors:
-	jmp k64err
+	align 8
+dev_find:
+	push	rax rcx rsi rdi rbp rbx
+	cld
+
+	lea	rsi, [dev_vendors]
+	mov	r10, rsi
+	and	r8d, 0xff
+
+	lodsq
+	cmp	eax, 16
+	jb	.err
+	lea	ebp, [eax - 8]
+	mov	edi, eax
+	shr	rax, 32
+	mov	r12d, eax
+	xor	ecx, ecx
+	xor	eax, eax
+@@:	add	ecx, eax
+	sub	r8d, 1
+	jc	@f
+	lodsd
+	sub	ebp, 4
+	jnz	@b
+	jmp	.err			; can't find correct "entry type"
+@@:
+	lodsd				; EAX = number of vendor entries
+	lea	rdi, [rcx*4 + rdi]	;	at EDI offset
+	add	rdi, r10		; += base address
+	add	r10, r12
+	mov	r12d, ecx		; how many entries skipped
+	mov	r13d, eax		; number of entries to be parsed
+	mov	ecx, eax
+	mov	eax, r9d
+	repne	scasd			; return: ecx = # of entries left to be parsed
+	cmp	[rdi - 4], eax
+	jnz	.err			; no vendor name
+
+	not	ecx
+	add	ecx, r13d		; ecx = # of entries already parsed
+	add	ecx, r12d		; += # of skipped entries
+	mov	esi, [r10 + rcx*4]
+	add	rsi, r10
+
+	lodsd
+	ror	r9, 32
+@@:	sub	eax, 1
+	jc	.err			; no devices for specefied vendor
+	cmp	[rsi], r9d
+	jz	@f
+	add	rsi, 12
+	jmp	@b
+@@:	mov	r8, rsi
+	clc
+.exit:
+	pop	rbx rbp rdi rsi rcx rax
+	ret
+.err:
+	stc
+	jmp	.exit
+
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+; input: r8  = 4byte unique id given to device driver during initialization
+;	 r9  = 8byte interrupt handler address
+;	 r12 = ??? someting MSI related (per MSI handler data)
+;---------------------------------------------------------------------------------------------------
+; TODO: can call this function multiple times if MSI-X supported with different r9 (need int_remove)
+
+	align 8
+int_install:
+	pushf
+	push	rax rcx rsi
+	cli
+
+	mov	ecx, r8d
+	shr	r8d, 16
+	mov	r14, inst_devs
+	cmp	[qword inst_devs_cnt], r8d
+	jbe	.err
+	imul	r8d, 12
+	cmp	[r14 + r8], ecx
+	jnz	.err
+	mov	r14, [r14 + r8 + 4]
+
+	;reg	 r8, 82f
+	;reg	 rcx, 42f
+	;reg	 r14, 102f
+
+
+.exit:
+	pop	rsi rcx rax
+	popf
+	ret
+.err:
 	stc
 	jmp	.exit
 
 
-
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 ; input: r8[7:0]    - vector in idt
 ;	 r8[11:8]   - IST
@@ -115,31 +185,52 @@ mov r12d, 8
 ;	 r12[13:12]   = ioapic trigger : polarity
 ;	 r12[15:14]   = 0
 
-  align 8
+	align 8
+int_install2:
+	pushf
+	push	rax rcx rsi
+	cli
 
-int_install:
+	mov	eax, r12d
 	movzx	ecx, r12b
 
 	call	idt_setIrq
 
-	lea	ecx, [rcx*2 + 0x11]
+	xor	r12, r12
 	and	r8d, 255
+	bt	eax, 13
+	setc	r12b
 	mov	rsi, ioapic
+	shl	r12d, 2
+	bt	eax, 12
+	movzx	eax, ah
+	adc	r12d, 0
+	and	eax, 3
+	shl	r12d, 13
+	shl	eax, 12
+	or	r8, r12
+	add	rsi, rax
 
-	mov	dword [rsi], ecx
+	lea	ecx, [rcx*2 + 0x11]
+	mov	dword [rsi], ecx		; high dword
 	mov	dword [rsi + 16], 0
 	sub	ecx, 1
-	mov	dword [rsi], ecx
+	mov	dword [rsi], ecx		; low dword
 	mov	dword [rsi + 16], r8d
 
+	pop	rsi rcx rax
+	popf
 	ret
 
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 ; input: r8[7:0]   - vector in idt
 ;	 r8[11:8]  - IST
 ;	 r9	   - handler mem address
 ; return: input r8 not modified
 
+	align 8
 idt_setIrq:
 	push	rbx rcx r8 rax rdx
 

@@ -7,8 +7,10 @@
 ;===================================================================================================
 ps2_init:
 
+	mov	eax, [rsp + 8]
+	reg	rax, 82f
 
-	; need real life polarity/trigger before code published online
+	; need real life polarity/trigger
 
 	mov	dword [ps2_packetMax], 3
 	mov	dword [ps2_packetCnt], -1
@@ -16,12 +18,18 @@ ps2_init:
 	mov	r8d, 0x0d0
 	lea	r9, [ps2_kbd_handler]
 	mov	r12, 0x00'01
-	call	int_install
+	call	int_install2
 
 	mov	r8d, 0x0d1
 	lea	r9, [ps2_mouse_handler2]
 	mov	r12, 0x00'0c
-	call	int_install
+	call	int_install2
+
+	; if don't init kbd, right kbd wont work without wrong mouse init :)
+
+	;mov	 r8d, [rsp + 8]
+	;lea	 r9, [ps2_mouse_handler2]
+	;call	 int_install
 
 
 
@@ -141,7 +149,7 @@ ps2_init:
 
 
 
-ret
+	ret 8
 
 
 
@@ -158,7 +166,7 @@ ps2_mouseSend:
 	push	rax rcx
 	mov	r9d, 0xd4
 @@:
-	; wait for input buffer to be empty, to send new byte in
+	; wait for input buffer to be empty to send new byte in
 	mov	ecx, 65535
 @@:	in	al, 0x64
 	test	al, 10b
@@ -170,7 +178,7 @@ ps2_mouseSend:
 	mov	al, r9b
 	out	0x64, al
 
-	; wait for input buffer to be empty, to send new byte in
+	; wait for input buffer to be empty to send new byte in
 	mov	ecx, 65535
 @@:	in	al, 0x64
 	test	al, 10b
@@ -213,7 +221,7 @@ ps2_mouse_handler2:
 	jnz	.exit
 	;---------------------------------------
 
-	; TODO: use less PUSH/POP registers unless we got here
+	; TODO: use less PUSH/POP registers until we got here
 
 	mov	eax, [ps2_mouseBytes]
 	movzx	ecx, al 			; flags 	  CX
@@ -272,10 +280,15 @@ ps2_mouse_handler2:
 ps2_kbd_handler:
 	push	rax		   ; there is no auto repeat on usb keyboards
 
-	in	al, 0x64
-	reg	rax, 214	; red on blue bgr
+;	 in	 al, 0x64
+;	 reg	 rax, 214	 ; red on blue bgr
 	in	al, 0x60
 	reg	rax, 21a	; green on blue bgr
+
+	cmp	al, 1
+	jnz	@f
+	call	reboot		; reboot if Esc key pressed down
+@@:
 
 	mov	dword [qword lapic + LAPIC_EOI], 0
 	pop	rax

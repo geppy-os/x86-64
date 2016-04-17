@@ -7,6 +7,39 @@
 
 
 ;===================================================================================================
+; input:  r8 - number
+;	  r9 - mem ptr where to save
+;	  r12b - how many 4bit digits to process starting with lowest bit in the r8 register
+
+	align 8
+regToAsciiHex:
+	mov	r13, '01234567'
+	mov	r14, '89abcdef'
+	push	rax rdi rcx r14 r13
+	cld
+	mov	rdi, r9
+
+	movzx	ecx, r12b
+	shl	ecx, 2
+	sub	ecx, 4
+	jb	.exit
+	ror	r8, cl
+@@:
+	mov	eax, r8d
+	and	eax, 15
+	movzx	eax, byte [rsp + rax]
+	rol	r8, 4
+	stosb
+	sub	r12d, 1
+	jnz	@b
+.exit:
+	mov	rcx, [rsp + 16]
+	mov	rdi, [rsp + 24]
+	mov	rax, [rsp + 32]
+	add	rsp, 40
+	ret
+
+;===================================================================================================
 ; input:  r8d - number
 ; return: xmm0 - 8byte ascii string (unused top bytes are zeroed)
 ;	  input r8 unchanged
@@ -28,8 +61,8 @@ r4ToAsiiHex:
 	shr	eax, 7
 	and	ecx, 0x1010101
 	and	eax, 0x1010101
-	imul	ecx, 7
-	imul	eax, 7
+	imul	ecx, 39
+	imul	eax, 39
 	lea	ecx, [ecx + esi + 0x30303030]
 	lea	eax, [eax + edi + 0x30303030]
 	movd	xmm0, ecx
@@ -65,8 +98,8 @@ r8ToAsiiHex:
 	and	rcx, r13
 	and	rax, r13
 	mov	r13, 0x30303030'30303030
-	imul	rcx, 7
-	imul	rax, 7
+	imul	rcx, 39
+	imul	rax, 39
 	add	r9, r13
 	add	r12, r13
 	add	r9, rcx

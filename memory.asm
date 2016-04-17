@@ -325,6 +325,7 @@ alloc_linAddr:
 	sub	ecx, ebp		; number of entries (generally, many hundreds)
 	mov	rax, rbx
 	;reg	 rax, 106f
+	;reg	 rdi, 106f
 	add	ecx,  4 		; += 16KB ! ! !
 	rep	stosq			; stosQ, fastest filling method on x64 unless AVX involved
 

@@ -87,10 +87,22 @@ rtc_int:
 
     align 8
 rtc_init:
+
 	push	rax rcx
+
+	mov	eax, [rsp + 24]
+	reg	rax, 82f
+
 
 	; driver needs to tell OS if interrupt that arrived belongs to this device
 	; (shared int handler)
+
+
+	mov	r8d, 0x11'f1
+	lea	r9, [rtc_int]
+	mov	r12d, 8
+	call	int_install2
+
 
 	pushf
 	cli
@@ -126,7 +138,7 @@ rtc_init:
 	in	al, 0x71
 
 	pop	rcx rax
-	ret
+	ret	8
 
 ;===================================================================================================
 ; input: r8 = 4bit rate

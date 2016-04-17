@@ -121,7 +121,7 @@ thread_create:
 	mov	r8, [r8*8]				; r8
 	mov	r9, [r9*8]				; r9
 
-	; prefetch PML4
+	; prefetch PML4 ( what for ???? )
 	lea	rcx, [rbp + 4096*2]
 	mov	rax, 0x1fff'ffff'ffff'fe00 shl 3
 	mov	r12d, 4096/128
@@ -315,17 +315,44 @@ thread_destroy:
 
 	align 8
 sleep:
-	push	rax
-	mov	rax, rsp
-	lea	r9, [.exit]
+	mov	dword [user_data_rw + slp], 1
+
+	lea	r9, [.timer_handler]
 	call	timer_in
-	jmp	$
-.exit:
-	mov	rsp, rax
-	mov	eax, [lapicT_time]
-	reg	rax, 100a
-	pop	rax
+@@:
+	cmp	dword [user_data_rw + slp], 1
+	jz	@b
+
 	ret
+
+.timer_handler:
+	rdtsc
+	mov	esi, [lapicT_time]
+	movzx	edi, ax
+	shr	edi, 4
+	imul	rsi, rdi
+	mov	ecx, eax
+	ror	rsi, cl
+	xor	rax, rsi
+	xor	rcx, rsi
+	xor	rdx, rsi
+	xor	rdi, rsi
+	xor	rbx, rsi
+	xor	rbp, rsi
+	xor	r8, rsi
+	xor	r9, rsi
+	xor	r10, rsi
+	xor	r11, rsi
+	xor	r12, rsi
+	xor	r13, rsi
+	xor	r14, rsi
+
+	mov	eax, [lapicT_time]
+	reg	rax, 106a
+	mov	dword [user_data_rw + slp], 0
+
+	add	rsp, [rsp]
+	jmp	timer_exit
 
 
 
@@ -346,8 +373,8 @@ noThreadSw:
 	popf
 	ret
 
-; maybe reserve R14 to save time that was not counted because LApicT was not running
-; if we entered LapicT we start measurment there and restore in in resumeThreadSw
+; maybe save time that was not counted because LapicT was not running
+; if we entered LapicT we start measurment there and restore in resumeThreadSw
 
 ;===================================================================================================
 ; can't use CLI instruction until resumeThreadSw is called

@@ -13,18 +13,47 @@ PMode:
 	mov	fs, ax
 	mov	gs, ax
 
-	;------------------------------------------
-	mov	eax, 1
-	cpuid		; 1fcbfbff
+;===================================================================================================
+
+					 ;  UC	 UC-  WT   WB
+	mov	eax, 1			 ; 000	 111  100  110
+	cpuid		; 1fcbfbff	    00	 07   04  06
 	bt	edx, 16
 	setc	byte [feature_PAT]	; tested on Intel CPU only
-	reg	edx, 80c
-		      ; jmp $
+
 	mov	eax, 0x80000000
 	cpuid
 	cmp	eax, 0x80000008
 	jb	k32err.no_longMode
-	;------------------------------------------
+
+	;intel section 4.1.4	  Enumeration of Paging Features by CPUID
+
+	;----------------------------------------------------
+	cmp	byte [feature_PAT], 1
+	jnz	.PAT_done
+
+	mov	ecx, IA32_PAT
+	rdmsr
+	reg	eax, 80c
+	reg	edx, 80a
+
+
+;00H Uncacheable (UC)
+;01H Write Combining (WC)
+;02H Reserved*
+;03H Reserved*
+;04H Write Through (WT)
+;05H Write Protected (WP)
+;06H Write Back (WB)
+;07H Uncached (UC-)
+
+
+
+
+.PAT_done:
+       ;jmp	$
+
+;===================================================================================================
 
 	mov	eax, cr0
 	;		   CD		 NW	 AM(align off)	EM(run MMX)
@@ -483,6 +512,8 @@ macro ___debug_showMem2{
 	;___debug_showMem2
 	;___debug_showMem1
 
+	; TODO: make separate array for 2MB aligned entries
+
 ;=================================================== alloc 2MB bellow 4GB for the kernel code ======
 
 	; go thru entries starting with last (highest mem addr)
@@ -569,6 +600,8 @@ macro ___debug_showMem2{
 
 	;___debug_showMem2
 
+	; TODO: alloc a few MBs for LFB framebuffer
+
 ;================================================================== alloc several 16KB chunks ======
 
 .16kb_cnt = 8
@@ -639,7 +672,7 @@ macro ___debug_showMem2{
 
 ;===================================================================================================
 ; setup initial paging
-
+;1)
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
@@ -684,7 +717,7 @@ macro ___debug_showMem2{
 	mov	dword [edi + 48], 0xbf000 + 10011b
 
 ;---------------------------------------------------------------------------- map shared data ------
-
+;2)
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
@@ -701,7 +734,7 @@ macro ___debug_showMem2{
 
 ;-------------------------------------------------------------------------------- map VBE LFB ------
 
-
+;3)
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
@@ -721,7 +754,7 @@ macro ___debug_showMem2{
 	imul	ebp, ebx			; height *= scanline in bytes
 	reg	ebp, 80a
 	mov	eax, edi
-	or	edi, 3
+	or	edi, 3 + PG_PCD
 	and	eax, 0x1fffff			; if starting addr is 2MB aligned
 	jz	.map_vbe_2mb			; then start mapping in 2MB chunks right away
 	test	eax, 4095
@@ -812,16 +845,15 @@ macro ___debug_showMem2{
 
 .vbe_is_mapped:
 
-;================================================================ map CPU private memory (64KB) ====
-;
-; 1st cpu starts at 4MB, look in 'geppy.asm' for names in comments
+;================================================================ map CPU private memory (96KB) ====
+; 1st cpu starts at 4MB
 
 	movd	ecx, xmm6			; restore ECX, PD-0
-
+;4)
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
-
+;5)
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	edi
@@ -841,11 +873,26 @@ macro ___debug_showMem2{
 	lea	eax, [edi + 4096]
 	lea	ebx, [edi + 4096*2]
 	lea	ebp, [edi + 4096*3]
-	;mov	 [esi + 32], edi		; reserved for "pgRam4"
+	;mov	 [esi + 32], edi		; reserved for "pgRam4" 	EDI
 	mov	[esi + 40], eax 		; kStack
 	mov	[esi + 48], ebx 		; kStack
-	mov	[esi + 56], ebp 		; registers
+	;	 [esi + 56]			; unused
+	;	 [esi + 64]			; PF_ram. 32KB, 8 entries * 8 byte
 
+	mov	[esi + 128], ebp		; registers
+	mov	[esi + 136], edi		; timer registers		EDI
+
+;6)	;----------------------------------------
+	shl	dword [esp], 14
+	call	zeroMem32
+	pop	edi
+
+	add	edi, 3
+	lea	eax, [edi + 4096]
+	lea	ebx, [edi + 4096*2]
+	lea	ebp, [edi + 4096*3]
+
+	mov	[esi + 144], edi		; user_data_rw
 
 ;===================================================================================================
 
@@ -869,6 +916,7 @@ macro ___debug_showMem2{
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 
+; need to return back to real mode, switch to text nide and display errors
 k32err:
 .offset = .k32err_len+2
 

@@ -1,5 +1,3 @@
 #!/bin/sh
-
 sudo kpartx -avs ../image.img
-sudo mount -t vfat /dev/mapper/loop1p1 ../a -o sync,rw,uid=1000,gid=1000,umask=133,dmask=022
-	
+sudo mount -t vfat /dev/mapper/loop1p1 ../a -o sync,rw,uid=1001,gid=1001,umask=133,dmask=022
