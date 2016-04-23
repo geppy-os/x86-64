@@ -893,6 +893,7 @@ macro ___debug_showMem2{
 	lea	ebp, [edi + 4096*3]
 
 	mov	[esi + 144], edi		; user_data_rw
+	mov	[esi + 152], eax		; kernel data
 
 ;===================================================================================================
 
@@ -907,7 +908,7 @@ macro ___debug_showMem2{
 	or	eax, 1 shl 31
 	mov	cr0, eax		; enable paging
 
-	jmp	0x18:0x200000		; jmp 0x18:LMode
+	jmp	0x18:LMode2		; jmp 0x18:LMode
 
 	; execution continues to file "kernel64.asm" at "LMode" label
 

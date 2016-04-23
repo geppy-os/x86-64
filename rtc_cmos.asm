@@ -87,22 +87,53 @@ rtc_int:
 
     align 8
 rtc_init:
+	; find device
+	mov	eax, [rsp + 8]
+	mov	ecx, [rsp + 8]
+	shr	eax, 16
+	mov	esi, inst_devs
+	cmp	[qword inst_devs_cnt], eax
+	jbe	k64err.RTC
+	imul	eax, 12
+	cmp	[rsi + rax], ecx
+	jnz	k64err.RTC
+	mov	rsi, [rsi + rax + 4]		 ; pointer to dev info
 
-	push	rax rcx
+	; find out to which "ioapic + input" RTC connected
 
-	mov	eax, [rsp + 24]
-	reg	rax, 82f
+	mov	eax, [rsi + 8]			; 4byte ioapic info
+	mov	ecx, eax
+	test	eax, 0x0f00'0000
+	jz	k64err.RTC
+	bt	eax, 3
+	jnc	k64err.RTC
+	and	eax, 3				; ioapic id
+	shr	ecx, 8
+	shl	eax, 12
+	movzx	ecx, cl 			; ioapic intput
+	add	eax, ioapic
+	lea	ecx, [rcx*2 + 0x11]
 
+	; install interrupt
 
-	; driver needs to tell OS if interrupt that arrived belongs to this device
-	; (shared int handler)
+	mov	[rax], ecx			; high dword
+	mov	edi, [rax + 16]
+	sub	ecx, 1
+	mov	[rax], ecx			; low dword
+	mov	esi, [rax + 16]
 
-
-	mov	r8d, 0x11'f1
+	mov	r8d, 0x01'f1
 	lea	r9, [rtc_int]
-	mov	r12d, 8
-	call	int_install2
+	call	idt_setIrq
 
+	mov	sil, 0xf1
+	btr	esi, 16
+	mov	[rax], ecx			; low dword
+	mov	[rax + 16], esi
+
+
+
+	; init the RealTimeClock
 
 	pushf
 	cli
@@ -137,7 +168,6 @@ rtc_init:
 	out	0x70, al
 	in	al, 0x71
 
-	pop	rcx rax
 	ret	8
 
 ;===================================================================================================

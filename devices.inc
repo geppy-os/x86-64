@@ -43,19 +43,27 @@ dev_vendOffs:
 	dd .intel - dev_vendOffs
 	dd .pci_classcode - dev_vendOffs
 .pnp:
-	dd 3					; msi available, msi in use bits
+	dd 3					; msi available bit, msi in use bit
 
 	dd 'C400', init_ps2Mouse-LMode, 0	; 2bytes for ioapic input & kernel id
+
+    ; alloc 4byte for for "action" handler with jobID, need to save IDT vector for each ioapic id + input
+    ; alloc 4byte for "disable device ints" handler
+
+	dd '0B00', rtc_init-LMode, 0x08'00'00'00	   ; 1c'01'0c'88
 
 	dd 'C500'				; device id
 	dd ps2_init-LMode			; offset to initialization function
 	dd 0x1c'00'00'00			; top byte3: up to 2 default legacy interrupts (1 & c)
 						;			 zero is not a valid interrupt
-						; byte2:
-						; byte1:
-						; lowest byte0: device type (ISA,PCI)
+						;			     for PCI we simply
+						;			     put 1 instead of source IRQ
+						;			      meaning ioapic info valid
+						; byte2: ioapic1 input
+						; byte1: ioapic2 input
+						; lowest byte0: 2bit ioapic1 id + 2bit flags
+						;		2bit ioapic2 id + 2bit flags
 
-	dd '0B00', rtc_init-LMode, 0x08'00'00'00
 
 .pnp1:
 .pnp2:

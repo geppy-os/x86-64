@@ -3,8 +3,9 @@
 ; All Rights Reserved.
 
 
-	org 0x29'9991'7000			; best to keep this 4KB aligned
-	;org 0x200000
+	org 0x200000				; real linear addr where kernel is copied
+LMode2:
+	org 0x29'9991'7000			; to catch errors during compilation, 4KB aligned
 	use64
 LMode:
 	mov	eax, 0x10
@@ -123,6 +124,9 @@ LMode:
 	mov	eax, 48
 	ltr	ax
 
+	mov	eax, LMode2 + ((_lmode_ends+32-LMode) and 0xffffe0)
+	mov	dword [qword kernelEnd_addr], eax
+
 ;===================================================================================================
 
 @@:	; need some minimum memory fragmented
@@ -171,7 +175,7 @@ LMode:
 	lea	r9, [int_lapicSpurious]
 	call	idt_setIrq
 
-	mov	r8d, 0x120
+	mov	r8d, 0x120			; IST 1, vector 0x20
 	lea	r9, [int_lapicTimer]
 	call	idt_setIrq
 
@@ -199,7 +203,6 @@ LMode:
 	mov	r9, 'PNP' + ('0B00' shl 32)
 	call	dev_install
 	jc	k64err
-
 
 ; Wait for LAPIC Timer speed to be measured so that we can use timers
 ;===================================================================================================

@@ -13,7 +13,7 @@
 ; that's all
 
 ; most variables(memory locations) are defined in this file
-; most constants and offsets are in "const.inc"
+; most constants and structs are in "const.inc"
 
 
 
@@ -130,8 +130,8 @@ isaDevs 	= data1 + 2048	; 16 20byte entries
 ; +11  ioapic input 1byte
 ;
 ; +12  1byte:
-;	  ioapic kernel id	 [3:0]
-;	  reserved bits 	 [5:4]
+;	  ioapic kernel id	 [1:0]
+;	  reserved bits 	 [5:2]
 ;	  =1 if MSI in use	 [6]
 ;	  =1 if entry valid	 [7]
 ;
@@ -154,8 +154,9 @@ screen		= data1 + 2424	; should be a 40byte struct here (VBE LFB)
 vidBuff 	= data1 + 2504	; another 40byte (double buffer for vbe lfb)
 vidBuff_changes = data1 + 2584	; RECT, region that was changed
 
+kernelEnd_addr	= data1 + 4088	; address were we can copy more ring0 code, grows over time
 inst_devs_cnt	= data1 + 4092
-inst_devs	= data2 	; one entry: +0 4byte id, +4 8byte address
+inst_devs	= data2 	; installed devices, one entry: +0 4byte id, +4 8byte address
 
 
 ;---------------------------------------------------------------------------------------------------
@@ -281,13 +282,14 @@ lapicT_ms	equ	r15+(12*1024+16)	; 4b, # of lapic timer ticks per millisecond
 lapicT_ms_fract equ	r15+(12*1024+20)	; 4b,			       for the divider of 2
 lapicT_us	equ	r15+(12*1024+24)	; 4b, each microsecond
 lapicT_us_fract equ	r15+(12*1024+28)	; 4b
-process_ptr	equ	r15+(12*1024+40)
-process_cnt	equ	r15+(12*1024+48)
-process_lock	equ	r15+(12*1024+52)
-_?		equ	r15+(12*1024+56)	; 4b
-_?		equ	r15+(12*1024+60)
-kernelPanic	equ	r15+(12*1024+64)	; 8b
-timers1 	equ	r15+(12*1024+72)	;
+irqMask 	equ	r15+(12*1024+36)	; 12b, 192 IDT vectors (from 48 to 239)
+kernelPanic	equ	r15+(12*1024+56)	; 4b
+_?		equ	r15+(12*1024+60)	; 4b
+
+;process_ptr	 equ	 r15+(12*1024+40)
+;process_cnt	 equ	 r15+(12*1024+48)
+;process_lock	 equ	 r15+(12*1024+52)
+
 timers_local	equ	r15+(12*1024+72)	;
 _?		equ	r15+(12*1024+100)
 timers_head	equ	r15+(12*1024+104)	; 2 2byte vars
@@ -313,6 +315,7 @@ _z		equ	r15+(12*1024+420)
 _btns		equ	r15+(12*1024+422)
 
 
+
 threads 	equ	r15+(13*1024)		; 3KB, its an array, thread id = index of thread entry
 
 pgRam4		equ	r15+(16*1024)		; ? hmmm (hosts 4KB chunks?)
@@ -323,13 +326,12 @@ kStack		equ	r15+(28*1024)		; 8KB grows down, ( 4KB at 20*1024, 4KB at 24*1024 )
 
 PF_ram		equ	r15+(32*1024)		; 32KB
 
-;-------------------------------------------------------------------------- thread control block ---
+;=========================================================================  thread control block ===
 registers	equ	r15+(64*1024)		; 4KB
 timer_regs	equ	r15+(68*1024)		; 4KB
 user_data_rw	equ	r15+(72*1024)		; 4KB, same vars offsets is used by ring3
 						;      for ring3 this 4KB is located at different addr
 						;      for ring0 this 4KB is here
-
 ;---------------------------------------------------------------------------------------------------
 ; following offsets are relative to 4KB (either "user_data_rw" or ring3 4KB):
 ;---------------------------------------------------------------------------------------------------
@@ -337,7 +339,10 @@ user_data_rw	equ	r15+(72*1024)		; 4KB, same vars offsets is used by ring3
 event_mask	equ	0			; 8byte
 slp		equ	8
 
+;==========================================================================  kernel only data  =====
 
+shared_IRQs    equ     r15+((76*1024)+0)	; 768bytes = 192 vectors * 4byte addr bellow 4GB
+_?	       equ     r15+((76*1024)+768)
 
 ;===================================================================================================
 
@@ -353,7 +358,6 @@ slp		equ	8
 	include 'pci.asm'
 	include 'timers.asm'
 	include 'files.asm'
-	include 'random.asm'
 	include 'bigDump/numbers.asm'
 	include 'k64errors.asm'
 	include 'crypt.asm'

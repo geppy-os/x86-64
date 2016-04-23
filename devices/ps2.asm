@@ -7,29 +7,19 @@
 ;===================================================================================================
 ps2_init:
 
-	mov	eax, [rsp + 8]
-	reg	rax, 82f
-
-	; need real life polarity/trigger
-
 	mov	dword [ps2_packetMax], 3
 	mov	dword [ps2_packetCnt], -1
 
-	mov	r8d, 0x0d0
-	lea	r9, [ps2_kbd_handler]
-	mov	r12, 0x00'01
-	call	int_install2
 
-	mov	r8d, 0x0d1
-	lea	r9, [ps2_mouse_handler2]
-	mov	r12, 0x00'0c
-	call	int_install2
+	mov	r8d, [rsp + 8]
+	lea	r9, [ps2_kbd_handler3]
+	mov	r12d, 1
+	call	int_install
 
-	; if don't init kbd, right kbd wont work without wrong mouse init :)
-
-	;mov	 r8d, [rsp + 8]
-	;lea	 r9, [ps2_mouse_handler2]
-	;call	 int_install
+	mov	r8d, [rsp + 8]
+	lea	r9, [ps2_mouse_handler3]
+	mov	r12d, 12
+	call	int_install
 
 
 
@@ -200,6 +190,79 @@ ps2_mouseSend:
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 
+
+	align 8
+ps2_mouse_handler3:
+	push	r15 rax rcx rbx rsi rdi rbp r8 r9
+
+	mov	r15, 0x400000
+	in	al, 0x60
+
+	mov	esi, [ps2_packetCnt]
+	cmp	esi, 0
+	jl	.mouse_init
+	jne	@f
+	test	eax, 1 shl 3			; first packet, bit3 must be 1
+	jz	.reinit_mouse
+@@:
+	add	dword [ps2_packetCnt], 1
+	mov	edi, [ps2_packetMax]
+	mov	[ps2_mouseBytes + rsi], al
+	cmp	dword [ps2_packetCnt], edi
+	jnz	.exit
+	;---------------------------------------
+
+	; TODO: use less PUSH/POP registers until we got here
+
+	mov	eax, [ps2_mouseBytes]
+	movzx	ecx, al 			; flags 	  CX
+	movzx	esi, ah 			; x	       SI
+	shr	eax, 16 			; y	    AX
+	mov	edi, 0xff
+	bt	ecx, 6				; x overlow
+	cmovc	esi, edi
+	bt	ecx, 7				; y overflow
+	cmovc	eax, edi
+	ror	esi, 8
+	ror	eax, 8
+	bt	ecx, 4
+	cmovc	si, di
+	bt	ecx, 5
+	cmovc	ax, di
+	xor	ebx, ebx			; z	    BX
+	rol	esi, 8
+	rol	eax, 8
+
+	cmp	dword [ps2_packetCnt], 4
+	jb	.save_info
+
+	mov	bl, [ps2_mouseBytes + 3]
+
+.save_info:
+	neg	ax
+	call	mouse_add_data
+
+	mov	dword [ps2_packetCnt], 0
+.exit:
+	;mov	 dword [qword lapic + LAPIC_EOI], 0
+	pop	r9 r8 rbp rdi rsi rbx rcx rax r15
+	ret
+;===================================================================================================
+
+.reinit_mouse:
+	reg	rax, 26f
+	mov	dword [ps2_packetCnt], -1
+	jmp	.exit
+
+.mouse_init:
+	reg	rax, 26f
+	jmp	.exit
+
+
+
+
+
+
 	align 8
 ps2_mouse_handler2:
 	push	r15 rax rcx rbx rsi rdi rbp r8 r9
@@ -293,6 +356,26 @@ ps2_kbd_handler:
 	mov	dword [qword lapic + LAPIC_EOI], 0
 	pop	rax
 	iretq
+
+
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+	align 8
+ps2_kbd_handler3:
+
+
+;	 in	 al, 0x64
+;	 reg	 rax, 214	 ; red on blue bgr
+	in	al, 0x60
+	reg	rax, 21a	; green on blue bgr
+
+	cmp	al, 1
+	jnz	@f
+	;call	 reboot 	 ; reboot if Esc key pressed down
+@@:
+
+	ret
 
 
 

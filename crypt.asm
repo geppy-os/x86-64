@@ -25,3 +25,8 @@ rand_tsc:
 	movzx	r8d, ax
 	pop	rsi rcx rdx rax
 	ret
+
+;===================================================================================================
+	align 8
+tsc_calibration:
+	ret

@@ -60,7 +60,18 @@ k64err:
 .P_0:
 	mov	dword [kernelPanic], 11
 	jmp	@f
-
+.sharedIntHandler:
+	mov	dword [kernelPanic], 12
+	jmp	@f
+.wrongSharedIntCount:
+	mov	dword [kernelPanic], 13
+	jmp	@f
+.shareIndHandler_largeAddr:
+	mov	dword [kernelPanic], 14
+	jmp	@f
+.RTC:
+	mov	dword [kernelPanic], 15
+	jmp	@f
 @@:
 	;cli
 	;mov	 eax, -1
@@ -155,6 +166,12 @@ k64err:
 	cmp	eax, 11
 	jb	.10
 	jz	.11
+	cmp	eax, 13
+	jb	.12
+	jz	.13
+	cmp	eax, 15
+	jb	.14
+	jz	.15
 	jmp	.err
 
 .0:	; #PF: happened while #PF handler was executing
@@ -208,6 +225,22 @@ k64err:
 .11:	; #PF, Present bit must be 0 in a PTe
 	mov	dword [qword 22], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('F' shl 16)
 	mov	dword [qword 26], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('0' shl 16)
+	jmp	.err
+.12:
+	mov	dword [qword 22], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26], (0xcf shl 24) + (0xcf  shl 8) + '1' + ('2' shl 16)
+	jmp	.err
+.13:
+	mov	dword [qword 22], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26], (0xcf shl 24) + (0xcf  shl 8) + '1' + ('3' shl 16)
+	jmp	.err
+.14:
+	mov	dword [qword 22], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26], (0xcf shl 24) + (0xcf  shl 8) + '1' + ('4' shl 16)
+	jmp	.err
+.15:
+	mov	dword [qword 22], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26], (0xcf shl 24) + (0xcf  shl 8) + '1' + ('5' shl 16)
 	jmp	.err
 .err:
 	mov	esi, [qword reg32.cursor]

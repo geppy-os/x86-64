@@ -1,6 +1,63 @@
 
 int_handlers:
 
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+
+	; must be 16byte aligned
+	align 16
+int_shared:
+	push	r8 rax rcx rsi rdi rbp rbx rdx	0
+@@:
+	mov	ecx, [rsp]
+	lea	rsi, [.handlers]
+	cmp	[.handlers], ecx
+	jbe	@f
+	mov	ecx, [rsi + 8 + rcx*8]
+	call	rcx
+	add	dword [rsp], 1
+	jmp	@b
+@@:
+	mov	rdx, [rsp + 8]
+	mov	rbx, [rsp + 16]
+	mov	rbp, [rsp + 24]
+	mov	rdi, [rsp + 32]
+	mov	rsi, [rsp + 40]
+	mov	rcx, [rsp + 48]
+	mov	rax, [rsp + 56]
+	mov	r8, [rsp + 64]
+	add	rsp, 72
+	mov	dword [qword lapic + LAPIC_EOI], 0
+	iretq
+
+.max = 8
+.sz2 = ($-int_shared)
+
+	; must be 16byte aligned
+
+	align 16
+
+	; must be no additional vars after "int_shared + .sz2" and ".handlers"
+
+	.handlers:	  dd 0		; counter, max 8
+	.?		  dd 0
+
+.sz = ($-int_shared)+64 ; 64 = 8 byte * 8 handlers that are saved bellow int handler
+
+
+
+
+
+;===================================================================================================
+; need 8byte entries, 4byte addr, 4byte =0 if dev can report if it was its interrupt
+;					=1 if dev can't report
+
+					; save offsets from LMode2
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+
 	include "int_PF.asm"
 
 ;===================================================================================================

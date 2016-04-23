@@ -13,6 +13,10 @@ k64err_messages:
 	dw .9-._
 	dw .10-._
 	dw .11-._
+	dw .12-._
+	dw .13-._
+	dw .14-._
+	dw .15-._
 ._:
 
 .0  db "#pf: 2nd pf",0		       ; #PF happend while executing PF handler
@@ -27,6 +31,10 @@ k64err_messages:
 .9  db "#gp:",0
 .10 db "#df:",0
 .11 db "#pf: p must be 0 in a pte",0
+.12 db "size of shared int handler",0
+.13 db "wrong count of shared ints on init",0
+.14 db "shared int hndl - large addr",0
+.15 db "unknown RTC",0
 
 k64err_messages_len = $-k64err_messages
 
