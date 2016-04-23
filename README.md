@@ -1,6 +1,15 @@
 # Description
 
-It's an x86-64 OS in its very early stages. Complete memory allocations functions are not even finished.
+It's an x86-64 OS in its very early stages.
+There is LAPIC, IOAPIC stuff, but not ACPI AML for PCI devices.
+There is no dynamic mem alloc (malloc) but static(predefined addresses) is just fine.
+Page Fault handler supplies RAM as needed (when 16KB chunk accessed).
+An IDT entry can share many devices.
+There is some graphics but no GUI just yet.
+There are no devices supported except RTC and PS2 mouse & kbd.
+There are timers with microsecond prcesion.
+Thread structure is yet to be clearly defined.
+Multi CPUs are coming up eventually.
 
 # Installation
 
