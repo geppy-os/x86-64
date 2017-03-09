@@ -7,6 +7,6 @@ fasm geppy.asm geppy.img
 
 if [ -e geppy.img ]; then
   cp geppy.img ../a -f
-  wine "C:\\Program Files\Bochs-2.6.8\bochs.exe" -f geppy.bxrc -q
+  bochs -f geppy.linux.bxrc -q
 fi
 	

@@ -1,5 +1,5 @@
-romimage: file="C:\Program Files\Bochs-2.6.8\BIOS-bochs-latest", address=0xfffe0000
-vgaromimage: file="C:\Program Files\Bochs-2.6.8\VGABIOS-lgpl-latest"
+romimage: file="$BXSHARE/BIOS-bochs-latest", address=0xfffe0000
+vgaromimage: file="$BXSHARE/VGABIOS-lgpl-latest"
 vga: extension=vbe
 
 megs: 512
@@ -16,7 +16,7 @@ ata0-slave: type=disk, translation=auto, status=ejected
 
 boot: disk
 
-#log: _bochsOut.txt
+log: _bochsOut.txt
 
 keyboard: type=at
 mouse: type=imps2, enabled=0

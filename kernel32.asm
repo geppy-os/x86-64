@@ -13,45 +13,7 @@ PMode:
 	mov	fs, ax
 	mov	gs, ax
 
-;===================================================================================================
-
-					 ;  UC	 UC-  WT   WB
-	mov	eax, 1			 ; 000	 111  100  110
-	cpuid		; 1fcbfbff	    00	 07   04  06
-	bt	edx, 16
-	setc	byte [feature_PAT]	; tested on Intel CPU only
-
-	mov	eax, 0x80000000
-	cpuid
-	cmp	eax, 0x80000008
-	jb	k32err.no_longMode
-
-	;intel section 4.1.4	  Enumeration of Paging Features by CPUID
-
-	;----------------------------------------------------
-	cmp	byte [feature_PAT], 1
-	jnz	.PAT_done
-
-	mov	ecx, IA32_PAT
-	rdmsr
-	reg	eax, 80c
-	reg	edx, 80a
-
-
-;00H Uncacheable (UC)
-;01H Write Combining (WC)
-;02H Reserved*
-;03H Reserved*
-;04H Write Through (WT)
-;05H Write Protected (WP)
-;06H Write Back (WB)
-;07H Uncached (UC-)
-
-
-
-
-.PAT_done:
-       ;jmp	$
+	mov	word [txtVidCursor + rmData], 320
 
 ;===================================================================================================
 
@@ -60,8 +22,8 @@ PMode:
 	and	eax, not((1 shl 30) + (1 shl 29) + (1 shl 18) + (1 shl 2))
 	mov	cr0, eax
 	mov	eax, cr4
-	;	       sse	 xsave
-	or	eax, 1 shl 9 ;+ 1 shl 18
+	;	    only ring0 TSC	sse	  xsave
+	or	eax,   (1 shl 2)   + (1 shl 9) ;+ 1 shl 18
 	mov	cr4, eax
 
 ;============================================================================ Find ACPI RSDT =======
@@ -117,8 +79,6 @@ PMode:
 @@:	test	eax, eax
 	jnz	.find_RSDP
 
-	;reg	 ecx, 874
-	;reg	 ebx, 874
 	mov	[acpi_rsdt + rmData], ecx
 	mov	[acpi_rsdt_len + rmData], ebx
 
@@ -173,8 +133,6 @@ PMode:
 	cmp	ecx, 64
 	jb	.MP_found
 
-	;reg	 ebx, 875h
-	;reg	 ecx, 475h
 	mov	[mp_table + rmData], ebx
 	mov	[mp_table_len + rmData], ecx
 .MP_found:
@@ -404,7 +362,7 @@ macro ___debug_showMem2{
 ;  Round starting mem addrs and sizes to 16KB, ranges that are above 64TB are labled invalid =0xff
 ;  Truncate sizes so that range+size doesn't overlap over 64TB
 ;  We'll end up with 4byte indexes for both addrs & size, each index represents 16KB
-;  We only touch "useable" mem ranges with mem type of 1
+;  Code bellow only touches "useable" mem ranges with mem type of 1
 ;---------------------------------------------------------------------------------------------------
 
 	movzx	ebp, byte [memMap_cnt + rmData]
@@ -604,7 +562,7 @@ macro ___debug_showMem2{
 
 ;================================================================== alloc several 16KB chunks ======
 
-.16kb_cnt = 8
+.16kb_cnt = 8	  ; 1)	2)  3) 4) ... later in this file
 
 	movzx	ebp, byte [memMap_cnt + rmData]
 	shl	ebp, 4
@@ -696,10 +654,11 @@ macro ___debug_showMem2{
 
 	movd	xmm6, ecx			; PD-0	=  xmm6
 
-	; identity map 1st lowest 512KB (from 0x00000 to 0x7ffff)
+	; identity map 1st lowest 512KB (from 0x8000 to 0x7ffff)
 	push	ecx edi
-	mov	eax, 3
-	mov	ecx, 128
+	add	edi, 8*8
+	mov	eax, (32*1024)+3
+	mov	ecx, 128-8
 @@:	mov	dword [edi], eax
 	add	edi,8
 	add	eax, 0x1000
@@ -707,14 +666,9 @@ macro ___debug_showMem2{
 	jnz	@b
 	pop	edi ecx
 
-	; map vbe text mode memory to ZERO linear address :)
-	mov	dword [edi     ], 0xb8000 + 10011b
-	mov	dword [edi + 8 ], 0xb9000 + 10011b	; with "disable cache" option
-	mov	dword [edi + 16], 0xba000 + 10011b
-	mov	dword [edi + 24], 0xbc000 + 10011b
-	mov	dword [edi + 32], 0xbd000 + 10011b
-	mov	dword [edi + 40], 0xbe000 + 10011b
-	mov	dword [edi + 48], 0xbf000 + 10011b
+	; map 8KB of vbe text mode memory at 'txtVidMem'
+	mov	dword [edi + (txtVidMem shr 12)*8    ], 0xb8000 + 10011b
+	mov	dword [edi + (txtVidMem shr 12)*8 + 8], 0xb9000 + 10011b
 
 ;---------------------------------------------------------------------------- map shared data ------
 ;2)
@@ -732,9 +686,37 @@ macro ___debug_showMem2{
 	mov	[edi + 0x1fe * 8], ebx		 ;	      3
 	mov	[edi + 0x1ff * 8], ebp		 ; locks
 
-;-------------------------------------------------------------------------------- map VBE LFB ------
+;---------------------------------------------------------- map sys thread header for 1st CPU ------
+;3)	PT-0  from 0 to 0x7fff (lowest 32KB)		  private to 1st CPU data (thread id 0)
 
-;3)
+	shl	dword [esp], 14
+	call	zeroMem32	    ; TODO: can simply mark PTes so that long mode #PF allocates RAM
+	pop	esi
+
+	add	esi, 3
+	lea	eax, [esi + 4096]
+	lea	ebx, [esi + 4096*2]
+	lea	ebp, [esi + 4096*3]
+	mov	[edi], esi
+	mov	[edi + 8], eax
+	mov	[edi + 16], ebx
+	mov	[edi + 24], ebp
+;4)
+	shl	dword [esp], 14
+	call	zeroMem32
+	pop	esi
+
+	add	esi, 3
+	lea	eax, [esi + 4096]
+	lea	ebx, [esi + 4096*2]
+	lea	ebp, [esi + 4096*3]
+	mov	[edi + 32], esi
+	mov	[edi + 40], eax
+	mov	[edi + 48], ebx
+	mov	[edi + 56], ebp
+
+;-------------------------------------------------------------------------------- map VBE LFB ------
+;5)
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
@@ -849,11 +831,11 @@ macro ___debug_showMem2{
 ; 1st cpu starts at 4MB
 
 	movd	ecx, xmm6			; restore ECX, PD-0
-;4)
+;6)
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	esi
-;5)
+;7)
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	edi
@@ -867,7 +849,7 @@ macro ___debug_showMem2{
 	mov	[esi], eax			 ; idt
 	mov	[esi + 8], ebx			 ; stack for some exceptions
 	;mov	 [esi + 16]			 ; reserved for "paging_ram"
-	mov	[esi + 24], ebp 		 ; some data and "threads"
+	mov	[esi + 24], ebp 		 ; some cpu data (used to be threads as well)
 
 	add	edi, 3
 	lea	eax, [edi + 4096]
@@ -879,10 +861,10 @@ macro ___debug_showMem2{
 	;	 [esi + 56]			; unused
 	;	 [esi + 64]			; PF_ram. 32KB, 8 entries * 8 byte
 
-	mov	[esi + 128], ebp		; registers
-	mov	[esi + 136], edi		; timer registers		EDI
+	;mov	 [esi + 128], ebp		 ; registers
+	;mov	 [esi + 136], edi		 ; timer registers		 EDI
 
-;6)	;----------------------------------------
+;8)	;----------------------------------------
 	shl	dword [esp], 14
 	call	zeroMem32
 	pop	edi
@@ -917,7 +899,7 @@ macro ___debug_showMem2{
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 
-; need to return back to real mode, switch to text nide and display errors
+; need to return back to real mode, switch to text mode and display errors
 k32err:
 .offset = .k32err_len+2
 
@@ -1040,7 +1022,7 @@ memTest32:
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
-reg32:
+reg321:
 
 	pushf
 	push	edx ebx eax edi
@@ -1053,7 +1035,8 @@ reg32:
 	cmova	ebx, edx
 
 	lea	edi, [ebx*2 + 2]
-	xadd	[.cursor], edi
+	lock
+	xadd	word [qword txtVidCursor + rmData], di
 	mov	edx, [esp + 24]
 
 	lea	edi, [edi + ebx*2 + 0xb8000-2]
@@ -1075,7 +1058,6 @@ reg32:
 	ret 8
 
 	align 4
-.cursor dd 160 ;0960	; in bytes, 2bytes per symbol in text mode
 
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////

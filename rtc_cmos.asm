@@ -23,7 +23,7 @@ rtc_int:
 	out	0x70, al
 	in	al, 0x71
 
-	add	byte [qword 8], 1
+	add	byte [qword 8+txtVidMem], 1
 	add	byte [qword time], 1		; <-- need to change this into 31bit value
 
 .exit:
@@ -40,10 +40,9 @@ rtc_int:
 	add	byte [sp_rtc_job], 1
 	jmp	.exit
 
-
-
-;===================================================================================================
+;-------------------------------------------------------------
 ; measure lapic timer ticks 5 times
+;-------------------------------------------------------------
 
 	align 16
 .lapicT_restart:
@@ -77,63 +76,21 @@ rtc_int:
 	call	rtc_setRate
 	jmp	.exit
 
-
-
-; Check number of times we received periodic interrupt - if update-ended was set (we need this flag).
-; If no flag, then enable separate update-ended interrupt (which result in update-ended flag set)
-;      to read date/time, which is only safe to read if no update-in-progress happening
-
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 
-    align 8
+	align 4
 rtc_init:
-	; find device
-	mov	eax, [rsp + 8]
-	mov	ecx, [rsp + 8]
-	shr	eax, 16
-	mov	esi, inst_devs
-	cmp	[qword inst_devs_cnt], eax
-	jbe	k64err.RTC
-	imul	eax, 12
-	cmp	[rsi + rax], ecx
-	jnz	k64err.RTC
-	mov	rsi, [rsi + rax + 4]		 ; pointer to dev info
 
-	; find out to which "ioapic + input" RTC connected
-
-	mov	eax, [rsi + 8]			; 4byte ioapic info
-	mov	ecx, eax
-	test	eax, 0x0f00'0000
-	jz	k64err.RTC
-	bt	eax, 3
-	jnc	k64err.RTC
-	and	eax, 3				; ioapic id
-	shr	ecx, 8
-	shl	eax, 12
-	movzx	ecx, cl 			; ioapic intput
-	add	eax, ioapic
-	lea	ecx, [rcx*2 + 0x11]
-
-	; install interrupt
-
-	mov	[rax], ecx			; high dword
-	mov	edi, [rax + 16]
-	sub	ecx, 1
-	mov	[rax], ecx			; low dword
-	mov	esi, [rax + 16]
-
-	mov	r8d, 0x01'f1
+	mov	r8, [qword devInfo]
 	lea	r9, [rtc_int]
-	call	idt_setIrq
-
-	mov	sil, 0xf1
-	btr	esi, 16
-	mov	[rax], ecx			; low dword
-	mov	[rax + 16], esi
-
-
+	mov	r12d, 0x01'f1
+	mov	r8d, [r8 + 8*devInfo_sz]
+	call	int_install
 
 	; init the RealTimeClock
+	;-------------------------------
 
 	pushf
 	cli
@@ -155,28 +112,30 @@ rtc_init:
 	or	dword [qword lapic + LAPICT], 1 shl 16	; mask timer
 
 	push	rax
-	mov	r8d, 0111b	; 512 times a second  (once per 1.953125 ms)
+	mov	r8d, 0111b	; 512 times a second  (once each 1.953125 ms)
 	call	rtc_setRate
 	pop	rax
 
 	mov	eax, 0xc
 	out	0x70, al
 	in	al, 0x71
+
 	popf
 
 	mov	eax, 0xc
 	out	0x70, al
 	in	al, 0x71
 
-	ret	8
+	ret
 
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 ; input: r8 = 4bit rate
 ;	 this function must not use stack
-    align 8
+
+	align 4
 rtc_setRate:
-	cmp	r8, 2
-	jb	k64err
 	and	r8d, 15
 	mov	eax, 0x8a
 	out	0x70, al
@@ -189,55 +148,3 @@ rtc_setRate:
 	mov	eax, ecx
 	out	0x71, al
 	ret
-
-;value	times per second
-;----------------------
-; 0010b  128
-; 0100b  4096
-; 0110b  1024
-; 1000b  256
-; 1010b  64
-; 1100b  16
-; 1110b  4
-; 0001b  256
-; 0011b  8192
-; 0101b  2048
-; 0111b  512
-; 1001b  128
-; 1011b  32
-; 1101b  8
-; 1111b  2
-
-
-
-; 0xA Status Register A (read/write)
-;-------------------------------------------------
-;  Bit 7     - (1) time update cycle in progress, data ouputs undefined
-;				   (bit 7 is read only)
-;  Bit 6,5,4 - 22 stage divider. 010b - 32.768 Khz time base (default)
-;  Bit 3-0   - Rate selection bits for interrupt.
-;				   0000b - none
-;				   0011b - 122 microseconds (minimum)
-;				   1111b - 500 milliseconds
-;				   0110b - 976.562 microseconds (default)
-
-;0xB Status Register B (read/write)
-;-------------------------------------------------
-;  Bit 7 - 1 enables cycle update, 0 disables
-;  Bit 6 - 1 enables periodic interrupt
-;  Bit 5 - 1 enables alarm interrupt
-;  Bit 4 - 1 enables update-ended interrupt
-;  Bit 3 - 1 enables square wave output
-;  Bit 2 - Data Mode - 0: BCD, 1: Binary
-;  Bit 1 - 24/12 hour selection - 1 enables 24 hour mode
-;  Bit 0 - Daylight Savings Enable - 1 enables
-
-;0xC Status Register C (Read only)
-;-------------------------------------------------
-;  Bit 7 - Interrupt request flag - 1 when any or all of bits 6-4 are
-;			  1 and appropriate enables (Register B) are set to 1. Generates
-;			  IRQ 8 when triggered.
-;  Bit 6 - Periodic Interrupt flag
-;  Bit 5 - Alarm Interrupt flag
-;  Bit 4 - Update-Ended Interrupt Flag
-;  Bit 3-0 ???

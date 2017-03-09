@@ -20,7 +20,7 @@ mem_mapIO:
 ;	 r12 = paging flags, all flags zeroed and replaced with r12
 ;
 ;--------------------------------------------------------------------------------------------------
-; Size at R9 is limited only by available x64 linear space but function operates on 2MB at a time.
+; Size at R9 is limited only by available x64 linear space but func operates on 2MB loops (=slow).
 ; If possible use alloc_linAddr to alloc 2MB and then use mem_setFlags to change flags within 2MB.
 ; Until function returns, one portion of memory may use one set of flags, another - different flags
 
@@ -134,11 +134,8 @@ mem_setFlags:
 ; Lin addr + size can't cross 1GB alignment. 1GB = 0x40000000 bytes = 0x10000 16KB units
 ;								    128TB = 0x2'0000'0000 16KB units
 ; All allocations must be 2MB aligned (starting address) bacause same 4KB PT(same mem usage) is used
-; for all within 2MB. This greatly reduces bloated code and logic in this function.
-;
+; for ALL within 2MB. This greatly reduces bloated code and logic in this function.
 ; There is no additional physical RAM used if allocation are 2MB aligned versus 4KB aligned alloc.
-; This is how it's setup by Intel/AMD. And the linear addrs space is quite huge on x64.
-
 
 	align 8
 alloc_linAddr:
@@ -175,7 +172,7 @@ alloc_linAddr:
 	mov	rdi, r13
 	mov	rbx, r12		; rbx - flags
 
-	; PDP(512GB) & PD(1GB) are shared among starting $ ending addrs (making this func simpler)
+	; PDP(512GB) & PD(1GB) are shared among starting & ending addrs (making this func simpler)
 
 	ror	r13, 39
 	mov	rax, 0xffff'ffff'ffff'fe00
@@ -322,7 +319,7 @@ alloc_linAddr:
 	and	ecx, 0x3ffff
 	and	rbx, r8
 	shl	rdi, 3
-	sub	ecx, ebp		; number of entries (generally, many hundreds)
+	sub	ecx, ebp		; number of entries (generally many hundreds)
 	mov	rax, rbx
 	;reg	 rax, 106f
 	;reg	 rdi, 106f
@@ -357,7 +354,6 @@ alloc_linAddr:
 	invlpg	[r9]
 
 	;reg	 r8, 104f
-
 	test	cl, cl
 	jnz	@f
 	mov	r8, r9
@@ -378,6 +374,8 @@ alloc_linAddr:
 ;---------------------------------------------------------------------------------------------------
 ; Function is meant to be used to allocate ram for paging structures only
 ; That is separate 4kb pages to hold PML4s, PDPs, PDs and PTs.
+
+; Do we have a nested noThreadSw/resumeThreadSw here ?
 
 	align 8
 alloc4kb_ram:
@@ -477,6 +475,7 @@ alloc4kb_ram:
 	jmp	.alloc
 .exit:
 	call	resumeThreadSw
+	clc
 	pop	rdx rbp rbx rdi rsi rcx rax
 	ret
 

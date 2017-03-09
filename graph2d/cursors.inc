@@ -1,12 +1,29 @@
 
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
+; All Rights Reserved.
+
+
 	align 16
 
-; 10000000
-; 11000000
-; 10100000
-; 10010000
-; 10001000
-; 10000100
-; 11111110
+arrow_mask:
+  dd	 0, 0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xffffff
+  dd	 0,	   0, 0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xffffff
+  dd	 0,	   0,	     0, 0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xffffff
+  dd	 0,	   0,	     0,        0, 0xffffff, 0xffffff, 0xffffff, 0xffffff
+  dd	 0,	   0,	     0,        0,	 0, 0xffffff, 0xffffff, 0xffffff
+  dd	 0,	   0,	     0,        0,	 0,	   0, 0xffffff, 0xffffff
+  dd	 0,	   0,	     0,        0,	 0,	   0,	     0, 0xffffff
+  dd	 0,	   0,	     0,        0,	 0,	   0,	     0,        0
 
-db 0xff,0xff,0xff
+arrow_clr:
+.cl1 = 0xff'00'00
+.cl2 = 0x00'a0'80
+
+  dd	.cl1,	 0,    0,    0,    0,	 0,    0,    0
+  dd	.cl1, .cl1,    0,    0,    0,	 0,    0,    0
+  dd	.cl1, .cl2, .cl1,    0,    0,	 0,    0,    0
+  dd	.cl1, .cl2, .cl2, .cl1,    0,	 0,    0,    0
+  dd	.cl1, .cl2, .cl2, .cl2, .cl1,	 0,    0,    0
+  dd	.cl1, .cl2, .cl2, .cl2, .cl2, .cl1,    0,    0
+  dd	.cl1, .cl2, .cl2, .cl2, .cl2, .cl2, .cl1,    0
+  dd	.cl1, .cl2, .cl2, .cl1, .cl1, .cl2, .cl2, .cl1

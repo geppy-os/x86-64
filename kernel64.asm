@@ -3,7 +3,7 @@
 ; All Rights Reserved.
 
 
-	org 0x200000				; real linear addr where kernel is copied
+	org 0x200000				; real linear addr where kernel is mapped initially
 LMode2:
 	org 0x29'9991'7000			; to catch errors during compilation, 4KB aligned
 	use64
@@ -14,6 +14,21 @@ LMode:
 
 	mov	r15, 0x400000
 	lea	rsp, [kStack]
+
+
+	xor	eax, eax
+	invlpg	[qword 0x200000]		; code
+	invlpg	[kStack-8]
+	invlpg	[rax]				; sys thread header
+	invlpg	[rax + 4096]
+	invlpg	[rax + 4096*2]
+	invlpg	[rax + 4096*3]
+	invlpg	[rax + 20*1024] 		; vbe text mode mem
+	invlpg	[rax + 24*1024]
+
+	mov	dword [tscGranul], 0
+	mov	dword [tscGranul + 4], 0x01010101
+	call	tsc
 
 	; TSS setup
 	;------------------------------
@@ -144,13 +159,25 @@ LMode:
 	call	refill_pagingRam
 
 ;===================================================================================================
-; can use memory allocations now, but no timers just yet
+;		     can use memory allocations now, but no timers just yet
 ;===================================================================================================
 
+	call	tsc
 	mov	r8, -1
-	call	g2d_init_screen 		; it will alloc one large screen buffer
+	call	g2d_init_screen 		; this will alloc two large screen buffers
 
-	call	acpi_parse_MADT 		; + setup IOAPICs & ISA->IOAPIC redirection
+	; we prefere info from PCI config space directly if available
+	; with ISA devs - there is no other way but to use ACPI
+	; to connect PCI devs to IOAPIC we also need ACPI (DSDT & SSDTs)
+	; but we'll use info from PCI config space first, wherever we can
+
+	call	acpi_parse_MADT 		; parse MADT, setup IOAPICs & ISA->IOAPIC redirection
+	jc	k64err.madt			;   it'll also initialize & mess with "devInfo" array
+
+	call	acpi_parse_FADT 		; do we have PS2 & RTC ?
+	jc	k64err.fadt
+
+	call	acpi_parse_MCFG
 
 	; get lapic address
 	mov	ecx, LAPIC_MSR
@@ -175,7 +202,7 @@ LMode:
 	lea	r9, [int_lapicSpurious]
 	call	idt_setIrq
 
-	mov	r8d, 0x120			; IST 1, vector 0x20
+	mov	r8d, 0x100+LAPICT_vector	; IST 1  &  IDT entry index
 	lea	r9, [int_lapicTimer]
 	call	idt_setIrq
 
@@ -183,38 +210,27 @@ LMode:
 	and	eax, not 0xff
 	or	eax, 0x14f			; lapic enable + idt entry for spurious interrupt
 	mov	[qword lapic + LAPIC_SVR], eax
-	mov	dword [qword lapic + LAPIC_DFR], 0xf000'0000	; flat model
+	or	dword [qword lapic + LAPIC_DFR], 0xf000'0000	; flat model
 	mov	dword [qword lapic + LAPICT_DIV], 0		; divide by 2, once and forever
-	mov	dword [qword lapic + LAPICT], 0x0'0020
+	mov	dword [qword lapic + LAPICT], LAPICT_vector
+
+	mov	eax, [qword lapic + LAPIC_ID]
+	shr	eax, 24
+	mov	[lapicID], al
 
 	xor	eax, eax
 	mov	cr8, rax
 	sti
 
-	mov	r8d, 0x0a2
-	lea	r9, [ps2_mouse_handler]
-	mov	r12, 0x00'02	      ;timer may have been remapped
-	;call	 int_install
+	call	rtc_init			; init RTC and measure LapicTimer speed
 
-
-	; init RTC and measure LapicTimer speed
-	;-------------------------------------------
-	mov	r8d, 0
-	mov	r9, 'PNP' + ('0B00' shl 32)
-	call	dev_install
-	jc	k64err
-
-; Wait for LAPIC Timer speed to be measured so that we can use timers
 ;===================================================================================================
-;     We can't put CPU to sleep as lapic timer will be suspended And there will be a slight
-;     delay before timer returns to full speed as CPU is waking up.
-;     A simple HLT instruction on modern CPUs will put CPU to noticebale sleep mode.
-
-
-	call	tsc_calibration
-	call	pci_figureMMIO
-	call	tsc_calibration
-	; if user not moving mouse then use TSC - next best thing low bits of a fast timer
+;   Wait for LAPIC Timer speed to be measured so that we can use timers
+;===================================================================================================
+;   We can't put CPU to sleep as lapic timer will be suspended And there will be a slight
+;   delay before timer returns to full speed as CPU is waking up.
+;   A simple HLT instruction on modern CPUs will put CPU to noticebale sleep mode.
+;   Lets do some useful work while waiting:
 
 
 @@:	; need some minimum memory fragmented
@@ -223,116 +239,57 @@ LMode:
 	cmp	dword [qword memTotal], 0x2000	; need min 128MB (min 3 function calls is required)
 	jb	@b
 
-
 @@:	; need to supply some minimum memory for #PF handler
 	call	update_PF_ram
 	cmp	word [PF_pages + 6], 0x800	; min 32MB for #PF, one call gets us max 15.9MB
 	jb	@b
 
+	;call	 refill_pagingRam		 ; need some min mem to use for paging structures
+	call	pci_figureMMIO
+       ; call	 pci_getBARs			 ; skips Bridges since we are using RTC
 
-	; and we need some min mem to use for paging structures
-	;call	 refill_pagingRam
-	call	tsc_calibration
-
-
-	; and now we are waiting for lapic timer speed to be measured
+	; still waiting for lapic timer speed to be measured ?
 @@:	cmp	byte [rtc_job], 0
-	jz	.calc_timer_speed
+	jz	.calc_timer_speed		 ; jump if no
 	call	fragmentRAM
 	jmp	@b
 
-;===================================================================================================
 .calc_timer_speed:
 	call	lapicT_calcSpeed
-	call	pci_getBARs			; skips Bridges since we are using RTC
-	call	tsc_calibration
 
-	; bit set - thread id available
-	xor	eax, eax
-	mov	rcx, gThreadIDs
-	not	rax
-	mov	[rcx + 8 ], rax
-	mov	[rcx + 16], rax
-	mov	[rcx + 24], rax
-	shl	rax, 2
-	mov	[rcx], rax
-
-
-	; this simply sets some vars, we are in a system thread already
-	call	thread_create_system
-
-
+	call	thread_createSys		; sets some vars, we are in a system thread already
 
 	bts	qword [k64_flags], 0
-	mov	qword [lapicT_time], 0
+	mov	qword [lapicT_time], 0x10
+	mov	rax, cr0
+	mov	dword [qword lapic + LAPICT_INIT], 0x232
 
+;===================================================================================================
+;				      can use timers now
+;===================================================================================================
 
-	mov	dword [qword lapic + LAPICT_INIT], 0x202
-
-
-	;mov	 r8d, 625*100		 ; 62.5ms
-	;lea	 r9, [screen_update]
-	;call	 timer_in
-
-
-
-	mov	r8d, 1000*0x25+10
-	lea	r9, [timer1]
-	mov	r12, 0x1212'0000'0000'abcd
-	mov	r13, 0xcccc'00f0'1000'3232
-	call	timer_in
-
-
-	mov	r8d, 1000*0x30+10
-	lea	r9, [timer1]
-	mov	r12, 0x3333333333333333
-	mov	r13, 0x4444444444444444
-	call	timer_in
-
-
-	mov	r8d, 1000*500+0x6
-	lea	r9, [timer1]
-	mov	r12, 0x11111
-	mov	r13, 0x22222
-	call	timer_in
-
-
-	mov	r8d, 0x35*1000
-	call	sleep
-
-
-	mov	r8d, 1000*800+0x6
-	lea	r9, [timer2]
-	mov	r12, -1+0x11111
-	mov	r13, -1+0x22222
-	call	timer_in
-
-
-	mov	r8d, 1000*999+0x6
-	lea	r9, [timer2]
-	mov	r12, -1 xor 0x11111
-	mov	r13, -1 xor 0x22222
-	call	timer_in
-
-
-	mov	r8d, 0
-	mov	r9, 'PNP' + ('C500' shl 32)
-	call	dev_install
-	jc	k64err
+	call	sysFile_buildInDrv		; parse drivers that were compiled & loaded with kernel
 
 
 
+
+
+
+
+
+
+;===================================================================================================
 
 
 
 	mov	rax, [lapicT_ms]
-	reg	rax, 101e
+	reg	rax, 104f
 	mov	rax, [lapicT_us]
-	reg	rax, 101e
-	mov	rax, [PF_pages]
-	reg	rax, 101e
+	reg	rax, 104f
+	;mov	 rax, [PF_pages]
+	;reg	 rax, 104f
 	mov	eax, [qword memTotal]
-	reg	rax, 101e
+	reg	rax, 84f
 
 
 	cmp	dword [qword vbeLfb_ptr + rmData], 0
@@ -441,11 +398,6 @@ LMode:
 	add	rsp, 128
 
 
-
-
-
-
-
 	; TODO: need to fix PS2 polarity/trigger
 	;	remove junk code
 
@@ -457,7 +409,178 @@ LMode:
 
 .55:
 
-	jmp	os_loop 			; jump to "sys_thread.asm"
+	or	dword [sysTasks], 1
+
+
+	jmp	OS_LOOP
+
+
+
+
+;===================================================================================================
+;/////////////////////	    System Thread     //////////////////////////////////////////////////////
+;===================================================================================================
+; Sytem thread mainly performs cleanup and distribution of resources and tasks
+; Some device drivers (tasks of the thread) can also run in the same thread
+;---------------------------------------------------------------------------------------------------
+	align 8
+OS_LOOP:
+addr1 = ($-LMode)+0x200000
+
+	add	byte [qword 160*24+txtVidMem + 32], 1	     ; 1st green square at the bottom
+
+
+
+
+    ;  jmp OS_LOOP_over
+    ;
+
+
+
+	test	dword [sysTasks], 1
+	jnz	devMngr
+	jmp	OS_LOOP_over
+
+
+
+devMngr:
+
+
+
+
+	btr	dword [sysTasks], 0
+	jmp	OS_LOOP_over
+
+
+
+OS_LOOP_over:
+	mov	eax, 0xe0000000
+	cmp	qword [lapicT_time], rax
+	jb	.1
+	bts	dword [lapicT_flags], 8
+	jc	.1
+
+	mov	r8d, 1000*0x25+10		; 0x25 ms
+	lea	r9, [timer1]
+	mov	r12, 0x1212'0000'0000'abcd
+	mov	r13, 0xcccc'00f0'1000'3232
+	call	timer_in
+
+.1:
+
+
+	;-----------------------------------------------------------------------------------
+	cmp	dword [qword lapic + LAPICT_INIT], 0
+	; now we get interrupt that triggers thread resume from sleep and we got HLT here
+	;				which will always fire when sys thread gets control
+	jnz	@f
+	mov	rax, cr8
+	hlt
+@@:	jmp	OS_LOOP
+
+
+setEntryPoint:
+	ret
+
+
+
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+; input: [rsp]	    = # of bytes on stack. To be added to RSP register for "ret" to execute properly
+;		      this also tells version(revision) of the stack
+;	 [rsp + 8]  = user data1
+;	 [rsp + 16] = user data2
+;	 [rsp + 24] = reserved (time in ?microseconds at which this timer event was scheduled)
+;---------------------------------------------------------------------------------------------------
+; timer fires out-of-order and can interrupt ANY code except for another timer
+; timer handler exits to the same thread, if thread was sleeping then go back to sleep
+
+	align 8
+timer1:
+	add	dword [qword 160*24+4+txtVidMem], 1
+
+	mov	r15, 0x400000
+	mov	rax, [lapicT_time]
+	reg	rax, 100b
+
+	mov	rax, [rsp + 8]
+	reg	rax, 1006
+	mov	rax, [rsp + 16]
+	reg	rax, 1006
+	movzx	eax, word [lapicT_currTID]
+	reg	rax, 406
+
+
+	rdtsc
+	mov	rsi, [lapicT_time]
+	mov	ecx, eax
+	rol	esi, cl
+	movzx	edi, ch
+	imul	rsi, rdi
+	ror	rdi, cl
+	rol	rcx, cl
+	xor	rax, rsi
+	xor	rcx, rsi
+	xor	rdx, rsi
+	xor	rdi, rsi
+	xor	rbx, rsi
+	xor	rbp, rsi
+	xor	r8, rsi
+	xor	r9, rsi
+	xor	r10, rsi
+	xor	r11, rsi
+	xor	r12, rsi
+	xor	r13, rsi
+	xor	r14, rsi
+
+	add	rsp, [rsp]
+	jmp	timer_exit
+
+
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+
+	align 8
+timer2:
+	add	dword [qword 160*24+6+txtVidMem], 1
+
+	mov	r15, 0x400000
+	mov	rax, [lapicT_time]
+	reg	rax, 100b
+
+	mov	rax, [rsp + 8]
+	reg	rax, 1005
+	mov	rax, [rsp + 16]
+	reg	rax, 1005
+	movzx	eax, word [lapicT_currTID]
+	reg	rax, 405
+
+
+	rdtsc
+	mov	rsi, [lapicT_time]
+	movzx	edi, ah
+	imul	rsi, rdi
+	mov	ecx, eax
+	ror	rsi, cl
+	xor	rax, rsi
+	xor	rcx, rsi
+	xor	rdx, rsi
+	xor	rdi, rsi
+	xor	rbx, rsi
+	xor	rbp, rsi
+	xor	r8, rsi
+	xor	r9, rsi
+	xor	r10, rsi
+	xor	r11, rsi
+	xor	r12, rsi
+	xor	r13, rsi
+	xor	r14, rsi
+
+
+	add	rsp, [rsp]
+	jmp	timer_exit
 
 
 ;===================================================================================================
@@ -469,5 +592,7 @@ reboot:
 	pushq	0
 	lidt	[rsp]
 	int	0x44
+
+
 
 

@@ -15,8 +15,8 @@ int_shared:
 	cmp	[.handlers], ecx
 	jbe	@f
 	mov	ecx, [rsi + 8 + rcx*8]
-	call	rcx
-	add	dword [rsp], 1
+	call	rcx			; TODO: function needs to return confirmation if this
+	add	dword [rsp], 1						     ; is its device or not
 	jmp	@b
 @@:
 	mov	rdx, [rsp + 8]
@@ -30,6 +30,7 @@ int_shared:
 	add	rsp, 72
 	mov	dword [qword lapic + LAPIC_EOI], 0
 	iretq
+
 
 .max = 8
 .sz2 = ($-int_shared)
@@ -70,16 +71,16 @@ int_GP:
 
   align 8
 int_DE:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '+' + ('D' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'E' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '+' + ('D' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'E' + ('_' shl 16)
 	jmp $
 	iretq
 
 
   align 8
 int_DB:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('D' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'B' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('D' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'B' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -87,8 +88,8 @@ int_DB:
 
   align 8
 int_NMI:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('N' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'M' + ('i' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('N' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'M' + ('i' shl 16)
 	jmp $
 
 	iretq
@@ -96,8 +97,8 @@ int_NMI:
 
   align 8
 int_BP:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('B' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('B' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -105,8 +106,8 @@ int_BP:
 
   align 8
 int_OF:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('O' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'F' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('O' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'F' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -114,8 +115,8 @@ int_OF:
 
   align 8
 int_BR:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('B' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'R' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('B' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'R' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -123,8 +124,8 @@ int_BR:
 
   align 8
 int_UD:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('U' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'D' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('U' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'D' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -132,8 +133,8 @@ int_UD:
 
   align 8
 int_NM:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('N' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'M' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('N' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'M' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -147,8 +148,8 @@ int_DF:
 
   align 8
 int_TS:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('T' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'S' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('T' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'S' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -156,8 +157,8 @@ int_TS:
 
   align 8
 int_NP:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('N' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('N' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'P' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -165,8 +166,8 @@ int_NP:
 
   align 8
 int_SS:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('S' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'S' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('S' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'S' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -174,8 +175,8 @@ int_SS:
 
   align 8
 int_MF:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('M' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'F' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('M' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'F' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -183,8 +184,8 @@ int_MF:
 
   align 8
 int_AC:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('A' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'C' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('A' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'C' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -192,8 +193,8 @@ int_AC:
 
   align 8
 int_MC:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('M' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'C' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('M' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'C' + ('_' shl 16)
 	jmp $
 
 	iretq
@@ -201,24 +202,24 @@ int_MC:
 
   align 8
 int_XM:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('X' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'M' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('X' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'M' + ('_' shl 16)
 	jmp $
 
 	iretq
 
   align 8
 int_VE:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('V' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'E' + ('_' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('V' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'E' + ('_' shl 16)
 	jmp $
 
 	iretq
 
   align 8
 int_dummy1:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + 'd' + ('U' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'm' + ('1' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'd' + ('u' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'm' + ('1' shl 16)
 	jmp $
 
 	iretq
@@ -226,8 +227,8 @@ int_dummy1:
 
   align 8
 int_dummy2:
-	mov	dword [qword 120], (0xcf shl 24) + (0xcf  shl 8) + 'd' + ('U' shl 16)
-	mov	dword [qword 124], (0xcf shl 24) + (0xcf  shl 8) + 'm' + ('2' shl 16)
+	mov	dword [qword 120+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'd' + ('u' shl 16)
+	mov	dword [qword 124+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + 'm' + ('2' shl 16)
 	jmp $
 
 	iretq

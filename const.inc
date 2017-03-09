@@ -3,6 +3,15 @@
 ; All Rights Reserved.
 
 
+
+; for "k64_flags" variable
+
+define FLAGS_PS2	(1 shl 1)
+define FLAGS_RTC	(1 shl 2)
+
+;0xfffffff0 is max value for LocalAPIC Timer, regadless how divider is set
+
+
 define IA32_STAR	0xc0000081
 define IA32_LSTAR	0xc0000082
 define IA32_FMASK	0xc0000084
@@ -15,6 +24,10 @@ define LAPIC_RRD	0x00c0
 define LAPIC_LDR	0x00d0
 define LAPIC_DFR	0x00e0
 define LAPIC_SVR	0x00f0
+
+define RTC_vector	0xf1		; entry index in IDT
+define LAPICT_vector	0x20		; entry index in IDT
+
 define LAPICT		0x0320
 define LAPICT_INIT	0x0380
 define LAPICT_CURRENT	0x0390
@@ -29,8 +42,8 @@ define PG_G		(1 shl 8)
 define PG_IO_ALLOC	(1 shl 9)	; page allocated for Memory Mapped IO
 define PG_MORE_STACK	(1 shl 10)	; alloc more stack, upper page must be mapped and have this flag
 define PG_ALLOC 	(1 shl 11)	; physical RAM will be supplied when accessed
-define PG_ZERO_ONACCESS (1 shl ?)
-define PG_ALLOC_USER	(1 shl ?)	; ?
+;define PG_ZERO_ONACCESS (1 shl ?)
+;define PG_ALLOC_USER	 (1 shl ?)	 ; ?
 define PG_XD		(1 shl 63)
 
 
@@ -39,6 +52,8 @@ define PG_PWT		(1 shl 3)
 define PG_PCD		(1 shl 4)
 define PG_PAT		(1 shl 7)	; conflicts with PG_S (2MB & 1GB pages)
 					;	 Intel ch 11.12.4 (Programming the PAT)
+define MAX_THREAD	255
+
 					;   and have WC mem for VBE LFB that uses 4KB & 2MB pages
 define IA32_MTRR_PHYSBASE	0x200
 define IA32_MTRR_PHYSMASK0	0x201
@@ -76,6 +91,14 @@ define IA32_MTRR_DEF_TYPE	0x2FF
 define PG_MEM_UC
 define PG_MEM_WB
 
+define LIB_SYS			0
+define FUNC_reg64		0
+define FUNC0_dd2asciiDec	1
+define FUNC0_thread_sleep	2
+define FUNC0_u			3
+define FUNC0_timer_in		4
+define FUNC0_timer_exit 	5
+define FUNC0_syscall		6
 
 struct RECT
   left		dd ?
@@ -130,23 +153,49 @@ struct DRAWBUFF
 ends
 
 ;--------------------------------------------------------------------------------------------------
-; 800 threads per 16KB
-; index in CPU private array = local to the CPU process id
+; All THREAD structures are located in shared among all CPUs memory.
+; Pointers to the lists of THREADs are in CPU private memory to avoid needless locks.
+; Each thread can belong to one CPU and can be managed by one CPU only.
+; Each thread can only belong to one priority list.
+;--------------------------------------------------------------------------------------------------
+; A thread occupies max 512GB and starts at a multiple of 512GB addresses ( 0b, 512GB, 1GB, ...).
+; All code in the thread is meant to be position independant.
+; All threads are mapped at the same time into system pml4 table.
+;     Thus, no two thread can share same 512GB space. Shared data access is allowed of course.
+;--------------------------------------------------------------------------------------------------
+; stack goes at the end of 512GB
+; so it turns out that each thread gets its own entry in pml4 (with entirely private PDP)
+; one thread is meant to be separate program/application
+; any logic within the thread (aka task) is to be done by means of asynchronyous event processing
+; we'll see how it turns out
+;--------------------------------------------------------------------------------------------------
+; thread id = gTID = THREAD struct index in shared memory
+; each CPU has its own system thread
+; system gTID is different for each CPU, but all sys threads run same code with diffrent data
+;--------------------------------------------------------------------------------------------------
+; One 512GB chunk is designated for non position independed code.
+; Running addr of legacy application gets hardcoded during compilation of that app.
+; Additional threadID info is used in this case.
+;--------------------------------------------------------------------------------------------------
+; in Geppy, "thread" is the the same as "process"
+;--------------------------------------------------------------------------------------------------
 
+; 20 bytes at the moment
 struct THREAD
   next		dw ?		; next
   prev		dw ?		; prev (for priority lists)
 
-  gTID		dw ?		; global Thread ID, if	=0 then we use predefined value for all
-				;		    if !=0 then start with "physAddr" and "gTID"
-				; gTID gives us linear addr and while we are inside timer
-				; interrupt (ring0) - we can access everything at that linear addr
+  pml4		dd ?		; 6byte (mov rax, qword [THREAD.pml4-2]    shr rax,16)
+		dw ?		;      must fill pml4 in the THREAD struct before ANY other variable
 
-  time2run	dw ?		; time meant to run in microseconds, max 65.535 milliseconds
-				;  TODO: need to check if (word * ticks-per-ms) fits into 0x6fffffff
+  time2run	dw ?		; time to run in microseconds, max 65535 milliseconds
 
-  timeDidRun	dd ?		; time it ran last time (could be affected by timers)
-				;    TODO: need better/longer period
+  timeDidRun	dw ?		; TODO: time it ran last time (could be affected by timers as well)
+		db ?
+
+  flags 	db ?		; contains 1byte (max value of 3) priority list id, at the moment
+  eventMask	dd ?
+  return_RIP	dq ?
 
 ;  timeLeft2run  dd ?		 ; positive - can still run, negative - ran too much
 				 ;   Can accumulate over time.
@@ -154,20 +203,35 @@ struct THREAD
 ends
 
 
+;--------------------------------------------------------------------------------------------------
+; From kernel viewpoint - max 1 timer (call of "timer_in" func) is allowed per thread =
+;									     fixed kernel mem usage
+; BUT we can make a list of user callback functions that are meant to fire at the same time
+; If Thread is executing a timer handler then new timer is attached in local list and will be
+; executed after current timer finishes.
+;--------------------------------------------------------------------------------------------------
 ; if TIMER entry is not allocated then data2 = 2byte index of next free(unallocated) entry
+;--------------------------------------------------------------------------------------------------
+; Across multiple threads:
+; Each timer handler is allowed to run for 4ms without interruption! (no other timers or events).
+; If thread_1 sets a timer at 0x500 ms time and thread_2 at 0x501 ms (it is 1ms difference) then we
+;    create some local queue in kernel (no TIMER enties at "timer_local" pointer)
+; When thread_1 timer exits - we either fire thread_2 timer right away or add new TIMER entry
+;--------------------------------------------------------------------------------------------------
+
 
 struct TIMER
-  returnPtr	dq ?
+  handlerPtr	dq ?
   data1 	dq ?
   data2 	dq ?
-  wakeUpAt	dq ?		; low 4bytes time in milliseconds, top 4bytes = # of microseconds
+  wakeUpAt	dq ?		; 8byte, same as "lapicT_time" units
   next		dw ?
   prev		dw ?
   gTID		dw ?		; global thread id
   cpuID 	dw ?
 ends
 
-
+; TIMERS struct holds a pointer to a block of TIMER entries
 struct TIMERS
   ptr		dq ?
   blockSz	dd ?

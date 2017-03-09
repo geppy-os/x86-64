@@ -2,28 +2,152 @@
 ; Distributed under GPL v1 License
 ; All Rights Reserved.
 
+;===================================================================================================
+;///////  acpi_parse_MCFG   ////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+; we currently supports only one entry in this table
+
+acpi_parse_MCFG:
+
+	mov	r9d, [qword acpi_mcfg + rmData]
+	mov	r12d, [qword acpi_mcfg_len + rmData]
+	cmp	r12d, 0x100000
+	jae	.exit
+	cmp	r12, 0x3c			; ensure at least one 16byte entry
+	jb	.exit
+
+	mov	r8, acpiTbl + 3
+	call	mapToKnownPT
+	cmp	dword [r8], 'MCFG'
+	jnz	.exit
+	cmp	r12d, [r8 + 4]
+	jnz	.exit
+
+	lea	r12, [r12 + r8 - 16]		; end of MCFG
+	add	r8, 0x2c
+.loop:
+	mov	rax, [r8]			; addr
+	reg	rax, 100a
+	movzx	eax, word [r8 + 8]		; ? matches ACPI "_SEG" if not 0
+	reg	rax, 40a
+	movzx	eax, byte [r8 + 10]		; starting pci bus
+	reg	rax, 20a
+	movzx	eax, byte [r8 + 11]		; ending pci bus
+	reg	rax, 20a
+
+	; commented bellow to force one entry
+	;add	 r8, 16
+	;cmp	 r8, r12
+	;jbe	 .loop
+
+
+.exit:
+	ret
+
 
 ;===================================================================================================
+;///////  acpi_parse_FADT  .. or FACP?	 ///////////////////////////////////////////////////////////
+;===================================================================================================
+
+acpi_parse_FADT:
+
+	mov	r9d, [qword acpi_facp + rmData]
+	mov	r12d, [qword acpi_facp_len + rmData]
+	cmp	r12d, 0x100000
+	jge	.err
+	cmp	r12, 48
+	jl	.err
+
+	mov	r8, acpiTbl + 3
+	call	mapToKnownPT
+	cmp	dword [r8], 'FACP'
+	jnz	.err
+	cmp	r12d, [r8 + 4]
+	jnz	.err
+
+	add	r12, r8 		; end of FADT
+
+
+	; for now, we'll assume that we have PS2(kbd irq 1, mouse irq 12) & RTC (irq 8)
+	; device driver can always tell - no, there is no device for me(driver)
+
+
+	;or	 dword [qword k64_flags], FLAGS_PS2
+	;or	 dword [qword k64_flags], FLAGS_RTC	    ;  'PNP' + ('0B00' shl 32)
+
+	mov	rsi, [qword devInfo]
+	movzx	edi, word [lapicT_currTID]
+
+	; RTC
+	mov	rax, 'PNP0B00' shl 8			; something that meant to be found
+	or	byte [rsi + 8*devInfo_sz + 8], 0x01
+	or	byte [rsi + 8*devInfo_sz + 9], 0x10	; has id at +16
+	mov	[rsi + 8*devInfo_sz + 14], di		; assigned thread id
+	mov	[rsi + 8*devInfo_sz + 16], rax		; PNP ID  for ISA device
+
+	; PS2 kbd
+	mov	rax, 'PNP0100' shl 8
+	or	byte [rsi + 1*devInfo_sz + 8], 0x01
+	or	byte [rsi + 1*devInfo_sz + 9], 0x10	; has id at +16
+	mov	[rsi + 1*devInfo_sz + 14], di
+	mov	[rsi + 1*devInfo_sz + 16], rax
+
+	; PS2 mouse
+	mov	rax, 'PNP0120' shl 8
+	or	byte [rsi + 12*devInfo_sz + 8], 0x01
+	or	byte [rsi + 12*devInfo_sz + 9], 0x10
+	mov	[rsi + 12*devInfo_sz + 14], di
+	mov	[rsi + 12*devInfo_sz + 16], rax
+
+
+
+	clc
+.exit:	ret
+.err:	stc
+	jmp	.exit
+
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+; initialize "devInfo" array
 ; get IOAPICs & LAPICs
 ; setup IOPIC IDs
 ; setup ISA IRQs -> IOAPIC redirection
-;===================================================================================================
+; setup "devInfo" array & related variables
+;---------------------------------------------------------------------------------------------------
 
 acpi_parse_MADT:
 
-	; setup default ISA -> IOAPIC mapping (will be overwritten by parsing MADT)
-	mov	rsi, isaDevs
-	xor	eax, eax
-	mov	ecx, 16
-@@:	mov	[rsi], eax		; store default ACPI GlobIntNumber
-	mov	byte [rsi + 12], 0	; default polarity=0, trigger=0, entry not present =0
-	add	eax, 1
-	add	rsi, 20
-	sub	ecx, 1
-	jnz	@b
+	mov	rax, 0x10'00000/16384
+	mov	r8, rax
+	shl	rax, 14
+	mov	r9d, 0x200000/16384
+	mov	r12d, PG_P + PG_RW + PG_ALLOC
+	call	alloc_linAddr
+	jc	k64err.allocLinAddr
 
+	xor	ecx, ecx
+	mov	[qword devInfo_1stFree], ecx
+	mov	[qword devInfo_cnt], ecx
+	mov	[qword devInfo], rax
+	mov	[qword ioapInfo], rax
+	mov	[qword ioapInfo_len], ecx
+	mov	[qword devInfo_cnt], ecx
+	mov	[qword devInfo_ioapMax], ecx
+
+	mov	rax, 0x14'00000/16384
+	mov	r8, rax
+	shl	rax, 14
+	mov	r9d, 0x200000/16384
+	mov	r12d, PG_P + PG_RW + PG_ALLOC
+	call	alloc_linAddr
+	jc	k64err.allocLinAddr
+
+	mov	qword [qword drvOnDisk], rax
+	mov	dword [qword drvOnDisk_cnt], 0
 
 	; map MADT
+	;-------------------------------------
 
 	mov	r9d, [qword acpi_apic + rmData]
 	mov	r12d, [qword acpi_apic_len + rmData]
@@ -36,6 +160,7 @@ acpi_parse_MADT:
 	call	mapToKnownPT
 
 	; parse MADT
+	;-------------------------------------
 
 	add	r12, r8 		; end of MADT,	R12
 	add	r8, 44
@@ -126,7 +251,7 @@ acpi_parse_MADT:
 	cmp	ecx, 14
 	jae	k64err
 	add	ecx, 1
-	shl	ebp, cl 	; EBP: bit set - ID free, bit cleared - ID taken
+	shl	ebp, cl 		; EBP: bit set - ID free, bit cleared - ID taken
 	and	ebp, 0xffff
 
 	mov	ebx, ioapic_inputCnt-1
@@ -172,13 +297,54 @@ acpi_parse_MADT:
 	; at this point we must use 'ioapic_inputCnt' to determine if ioapic exist/valid
 	; 'ioapic_gin' must no longer be used fo this purpose
 
-	cmp	dword [qword ioapic_inputCnt], 0
-	jz	.exit
+
+;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+
+
+	; reserve space for ioapic inputs
+	;---------------------------------
+	cld
+	mov	esi, ioapic_inputCnt
+	xor	eax, eax
+	xor	ecx, ecx
+	mov	edi, 4			; max 4 ioapics
+@@:	lodsb
+	add	ecx, eax		; += max inputs for each known ioapic
+	dec	edi
+	jnz	@b
+	test	ecx, ecx
+	jz	k64err.noIOAPICs
+
+	imul	ecx, ioapInfo_sz
+	mov	[qword ioapInfo_len], ecx
+	cld
+	mov	rdi, [qword ioapInfo]
+	xor	eax, eax
+	rep	stosb
+
+	; setup default ISA -> IOAPIC mapping (will be overwritten by parsing MADT)
+	;---------------------------------------------------------------------------
+	mov	esi, [qword ioapInfo_len]
+	add	rsi, [qword ioapInfo]
+	mov	[qword devInfo], rsi
+	xor	eax, eax
+	xor	edi, edi
+	mov	ecx, 16
+@@:	mov	[rsi], edi
+	mov	[rsi + 4], eax		; store default ACPI GlobIntNumber (temp location for this)
+	mov	[rsi + 8], rdi		; default polarity=0, trigger=0, entry not present =0
+	mov	[rsi + 16], rdi
+	add	eax, 1
+	add	rsi, devInfo_sz
+	sub	ecx, 1
+	jnz	@b
 
 ;===================================================================================================
 
 	mov	r8, r9
-	mov	r9, isaDevs
+	mov	r9, [qword devInfo]
 	xor	edx, edx
 
 .2nd_pass:
@@ -194,24 +360,26 @@ acpi_parse_MADT:
 
 .isa_override:
 	;reg	 rax, 403
-	mov	ecx, [r8 + 4]		; GIN (GlobIntNum)
-	shr	eax, 24 		; al = isa irq
+	mov	ecx, [r8 + 4]		; ecx = GIN (GlobIntNum)
+	shr	eax, 24 		; al  = isa irq
 	;reg	 rcx, 404
 	;reg	 rax, 404
-	imul	edi, eax, 20
-	mov	[r9 + rdi], ecx
+	imul	edi, eax, devInfo_sz
+	mov	[r9 + rdi + 4], ecx
 
 	movzx	eax, byte [r8 + 8]
 	and	eax, 1111b
 	shl	eax, 6			; ah[1:0] = trigger, al[7:6] = polarity
 	;reg	 rax, 404
 	cmp	al, 10'000000b
-	jz	.2nd_pass		; use bus default if reserved polarity supplied
-	btr	eax, 6
-	cmp	ah, 10b
-	jz	.2nd_pass		; use bus default if reserved trigger supplied
-	shr	ah, 1
-	shr	eax, 3
+	jnz	@f
+	xor	al, al			; use bus default if reserved polarity supplied
+@@:	cmp	ah, 10b
+	jnz	@f
+	xor	ah, ah			; use bus default if reserved trigger supplied
+@@:	shr	ah, 1
+	and	eax, 0x180
+	shr	eax, 1			; bits [7:6], trig:pol
 	mov	byte [r9 + rdi + 12], al
 	;reg	 rax, 204
 	jmp	.2nd_pass
@@ -254,26 +422,25 @@ acpi_parse_MADT:
 .defaults_set:
 
 ;===================================================================================================
-; convert GlobIntNum into IOAPIC kernel_id and IOAPIC input for each ISA entry
-; Set polarity/trigger for some/all IOAPIC inputs. These values can be ovewritten later by PCI code if
-;			   ISA devices are not present and PCI entries have different polarity/trigger
+; convert ACPI GlobIntNum into IOAPIC kernel_id and IOAPIC input for each ISA entry
 ;===================================================================================================
 
-
-	mov	esi, isaDevs
-	xor	ebp, ebp
+	mov	rsi, [qword devInfo]
+	xor	ebp, ebp			; ebp = index
 .IRQ_fix:
-	mov	ecx, [rsi]
-	xor	edi, edi
+	mov	ecx, [rsi + 4]			; ecx = acpi glob int num
+	xor	edi, edi			; edi = kernel ioapic id
 	not	edi
 @@:
 	; start by enumerating thru 4 IOAPICs [0-3]
 	add	edi, 1
+	movzx	ebx, byte [qword ioapic_inputCnt + rdi]
 	cmp	edi, 4
 	jae	.invalid			; if no ioapic then all ioapic info is irrelevant
 
 	mov	eax, [qword ioapic_gin + rdi*4]
-	movzx	ebx, byte [qword ioapic_inputCnt + rdi]
+	test	ebx, ebx			; zero ioapic inputs ?
+	jz	@b
 	cmp	eax, ecx
 	ja	@b				; next ioapic if starting GIN > required
 	add	ebx, eax
@@ -281,59 +448,73 @@ acpi_parse_MADT:
 	jae	@b				; next ioapic if required GIN outside this ioapic range
 	sub	ecx, eax			; ecx = ioapic input, edi = ioapic kernel id
 	cmp	ecx, 255
-	ja	.next_irq
+	ja	.invalid
+	cmp	cl, [qword ioapic_inputCnt + rdi]
+	jae	.invalid
 
-	or	edi, 0x80			; add present flags - bit 7
-	movzx	eax, byte [rsi + 12]		; get polarity and trigger
-	mov	[rsi + 11], cl
-	mov	[rsi + 12], dil 		; polarity & trigger are destroyed
+	; DONE: ecx = ioapic input, edi = ioapic kernel id
 
-	; in theory we could end up changing IOAPIC entry twice if several ISA inputs connected
-	; to the same IOAPIC input (could be different polarity/trigger which we don't handle)
-
-	and	edi, 3
-	cmp	byte [qword ioapic_inputCnt + rdi], 0
+	cmp	ebp, 2				; #2 used internally by 2 PICs, never used by ISA devs
 	jz	.invalid
+	cmp	ebp, 7				; #7 is PIC spurious IRQ (so can be #15)
+	jnz	.valid
 
-	shl	edi, 12
-	and	eax, 0x30
-	shl	eax, 3
-	shr	al, 1
-	shl	eax, 7
-	or	eax, 0x10000			; mask_interrupt bit
-	add	edi, ioapic
-
-	lea	ecx, [rcx*2 + 0x11]
-	mov	dword [rdi], ecx		; high dword
-	mov	dword [rdi + 16], 0
-	sub	ecx, 1
-	mov	dword [rdi], ecx		; low dword
-	mov	dword [rdi + 16], eax		; set polarity bit, trigger bit, mask_interrupt bit
-
-.next_irq:
-	cmp	ebp, 2				; #2 used internally by 2 PIC, never used with ISA
-	jnz	@f
 .invalid:
-	mov	dword [rsi], 0
-	mov	dword [rsi + 12], 0
+	xor	ecx, ecx
+	mov	[rsi], rcx
+	mov	[rsi + 8], rcx
+	mov	[rsi + 16], rcx
+	mov	[rsi + 24], ecx
+	not	ecx
+	mov	[rsi + 14], cx
+	jmp	@f
+
+.valid:
+	or	edi, 0x20			; add present flags - bit 5
+	xor	eax, eax
+	mov	[rsi + 9], bpl			; source bus irq (low 4bits)
+	or	[rsi + 12], dil 		; merge kernel ioapic id & present flag with pol/trig
+	mov	[rsi + 13], cl			; ioapic input #
+	mov	word [rsi + 14], -1		; no thread assigned
+	mov	[rsi + 16], rcx 		; unknown vendor + device
+	mov	[rsi + 24], eax 		; unknown classcode
+
+	; assign 4byte dev_id (not optional, used to determine if bus input/pin valid)
+
+	call	rand_tsc			; TSC is executed in predictable intervals :(
+	shl	r8d, 16 			;    this random may change as dev driver is assigned
+	lea	r8, [r8 + rbp + 1]		; "or r8d, ebp+1" = merge dev_id (starts with 1)
+	mov	[rsi], r8d			;		    bit 15 =0 for non PCI
 @@:
 	add	ebp, 1
-	add	rsi, 20
+	add	rsi, devInfo_sz
 	cmp	ebp, 16
 	jb	.IRQ_fix
 
-	; PIC spurious IRQs can't be connected to anything
-	mov	esi, isaDevs
-	xor	eax, eax
-	mov	[rsi + 7*20], eax		; #7
-	mov	[rsi + 7*20 + 12], eax
-	;mov	 [rsi + 15*20], eax		; #15 IDE disk maybe
-	;mov	 [rsi + 15*20 + 12], eax
+	mov	dword [qword devInfo_cnt], 16
 
 
 
-	; first we'll probe ISA devs; if not present - PCI is free to override polarity/trigger
-.exit:
+
+
+;---------------- debug
+macro sad{
+	mov	rsi, [qword devInfo]
+	reg	rsi, 101a
+	mov	ecx, 16
+
+@@:	reg	[rsi], 80a
+	reg	[rsi + 4], 40b
+	reg	[rsi + 9], 20b
+	reg	[rsi + 12], 20b
+	reg	[rsi + 13], 20b
+	add	rsi, devInfo_sz
+	sub	ecx, 1
+	jnz	@b
+}
+;----------------
+
+.exit:	clc
 	ret
 
 

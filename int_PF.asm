@@ -19,13 +19,6 @@ int_PF:
 	jz	k64err.pf_2nd_PF
 	mov	byte [sp_PF_2nd], 0x5a
 
-	;mov	 dword [qword 32], (0x4f shl 24) + (0x4f  shl 8) + '_' + ('P' shl 16)
-	;mov	 dword [qword 36], (0x4f shl 24) + (0x4f  shl 8) + 'F' + ('_' shl 16)
-	;mov	 esi, [qword reg32.cursor]
-	;mov	 dword [qword reg32.cursor], 42
-	;reg	 rax, 44f
-	;reg	 rbp, 104f
-	;mov	 [qword reg32.cursor], esi
 
 	mov	ecx, [sp_PF_pages]
 	mov	ebx, [sp_PF_pages + 4]
@@ -43,7 +36,6 @@ int_PF:
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PDP address from PML4 entry
-	;reg	 rdi, 101f
 	mov	rsi, 0xffff'ffff'fffc'0000
 	rol	rbp, 9			   ; 1
 	xor	edi, 1				; invert Present flag
@@ -52,7 +44,6 @@ int_PF:
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PD address from PDP entry
-	;reg	 rdi, 101f
 	mov	rsi, 0xffff'ffff'f800'0000
 	rol	rbp, 9			   ; 2
 	xor	edi, 1
@@ -61,7 +52,6 @@ int_PF:
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PT address from PD entry
-	;reg	 rdi, 101f
 	mov	rsi, 0xffff'fff0'0000'0000
 	rol	rbp, 9			   ; 3
 	xor	edi, 1
@@ -71,8 +61,8 @@ int_PF:
 	or	rsi, rbp			; RSI = PT entry (points to 4 KB)
 	shr	rsi, 2				;	align to a multiple of 4
 	shl	rsi, 2				;	we operate in 16KB chunks
+
 	mov	rdi, [rsi*8]
-	reg	rdi, 107f
 	test	edi, 1				; Must be zero. Issue (=1) happens on Bochs-2.68 emulator
 	jnz	k64err.P_0			;    but error code reports correct "page not present"
 	test	edi, PG_ALLOC
@@ -108,7 +98,6 @@ int_PF:
 	neg	rdi
 	lea	rax, [PF_ram + 4096 + rax]
 	mov	edi, [rax + rdi*4]		; EDI = 16kb index
-	;reg	 rdi, 69a
 
 	ror	ebx, 16
 	sub	cx, 1				; cached page size --
@@ -123,7 +112,6 @@ int_PF:
 	shl	rdi, 14
 	or	rdi, 3
 	mov	[rsi*8], rdi
-	;reg	 rdi, 102f
 	add	rdi, 4096
 	mov	[rsi*8 + 8], rdi
 	add	rdi, 4096
@@ -161,10 +149,6 @@ int_PF:
 	pop	rbx rdi rsi rcx rax r15 r8 rbp
 	iretq
 
-
-
-; ?? it can be that no pages are mapped but size is not zero at "PF_pages"
-; ?? if this case 'alloc_ram' is in the process of allocating ram from PF pool
 
 
 

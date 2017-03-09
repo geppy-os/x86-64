@@ -4,46 +4,56 @@
 
 
 ;===================================================================================================
-;    int_lapicTimer
+;    int_lapicTimer  -	switches threads, not a scheduler   ////////////////////////////////////////
 ;===================================================================================================
 ; !! LAPIC Timer is triggered because we need something new to run, not because something expired !!
 
 
-	align 8
+; NEED 8byte "lapicT_time" var, using only 4byte now
+
+; some syscalls like "thread_sleep" can wait for result before returning to user, is it sleep state?
+; better not to have postponed syscalls like "thread_sleep"
+; but wat if we do?
+
+	align 4
 int_lapicTimer:
-	add	byte [qword 0], 1
+	or	dword [qword lapic + LAPICT], 1 shl 16
+
+	add	byte [qword 0+txtVidMem], 1		; most top left symbol (next to it is RTC)
 	push	r15 r13 rax rcx 			; 6 regs in RTC interrupt which shares stack
 	sub	rsp, 120
+
 	mov	eax, [sp_lapicT_flags]
+
+	cmp	dword [qword lapic + LAPICT_INIT], 0xffff'fff0
+	ja	k64err
 
 	; check if noThreadSw was called prior to entering this handler
 	test	eax, 1 shl 2				; 4
-	jz	@f					; jump if no block to switch threads
+	jz	@f					; jump if no "block" present to switch threads
 	or	dword [sp_lapicT_flags], 1 shl 3	; 8
 	test	eax, 1 shl 3
-	jnz	k64err.lapT_doubleINT			; error if "INT n" was executed twice in a row
+	jnz	k64err.lapT_doubleINT			; handler executed twice in a row with a block
 
-	; simply exit if no thread switch requested
+	; simply exit if "no thread switch" was requested
 	add	rsp, 120
 	pop	rcx rax r13 r15
 	mov	dword [qword lapic + LAPIC_EOI], 0
 	iretq
 
 ;---------------------------------------------------------------------------------------------------
-	align 8
+	align 4
 @@:
-	mov	r13d, [qword lapic + LAPICT_INIT]	;			R13
-	mov	dword [qword lapic + LAPICT_INIT], -1
+	mov	r13d, [qword lapic + LAPICT_INIT]	; INIT can be 0 			  R13
+	sub	r13d, [qword lapic + LAPICT_CURRENT]	; if thread prematurely goes to sleep
+	or	dword [qword lapic + LAPICT], 1 shl 16
+	mov	dword [qword lapic + LAPICT_INIT], -1	; how long it takes to execute this handler ?
 
 	mov	r15,	  [sp_lapicT_r15]
 	movzx	ecx, word [sp_lapicT_currTID]
 	shl	r15, 16
-
-	; calc address to save old thread registers
-	imul	rcx, 0x10000 * 512
-	lea	rax, [registers]
-	test	rcx, rcx
-	cmovz	rcx, rax
+	mov	rax, 0x8000000000
+	imul	rcx, rax				; address to save old thread registers
 
 	fxsave	[rcx]
 	mov	[rcx + 512     ], r14
@@ -78,75 +88,53 @@ int_lapicTimer:
 	mov	[rcx + 512 + 152], rdx
 
 	mov	r14d, [qword lapic + LAPICT_CURRENT]	;			R14
-	xor	ebx, ebx				;			RBX
-
-;===================================================================================================
-; if "lapicT_time" doesn't overflow then we keep processing outstanding (if any) list first
-
-; before "lapicT_time" overflow:
-; if we adding timers on list #1 then #0 is outstanding which is processed 1st
-;			      #0      #1
-; After we remove most recent timer thread, we consider potential "lapicT_time" overflow
-;
-; if lapicT_time overflows then we have only 1 chance to process 1 last outstanding timer entry
-;     After we remove outstanding timer entry from the list,
-;	 we switch add_list id to the old outstanding list where counter must be 0 by now.
-;===================================================================================================
-
-
-	; process timer list first - all timers have priority over regulary trigerred threads
-
-	add	dword [lapicT_time], r13d		; bring time up to date
-	adc	dword [lapicT_flags], 0 		; set bit0 to check counters later
+	bts	dword [lapicT_flags], 0 		; =1 when no TIMER entry on current timer_list id
 
 	xor	ecx, ecx
-	bt	dword [lapicT_flags], 1 		; get lapicT_time ID (same as add_list ID)
+	add	[lapicT_time], r13			; bring time up to date
 	setc	cl
-	xor	ecx, 1					; we'll use opposite(to add_list) list first
-	cmp	[timers_local + TIMERS.cnt + rcx*8], 0	; check if counter =0 on outstanding list
-	jnz	.process_timer				; process any outstanding timers right away
+	shl	ecx, 1
+	xor	dword [lapicT_flags], ecx		; time overflow = change of current timer_list id
+	xor	r11, r11				; =0 if priority thread (no custom RIP addr)
 
-	xor	ecx, 1
-	cmp	[timers_local + TIMERS.cnt + rcx*8], 0	; then check counter on CURRENT list (add_list)
-	jz	.process_priority
+	;-----------------------------------------------
+	bt	dword [lapicT_flags], 1 		; get current timer_list id
+	setc	cl
 
-	; check time on non-outstanding timer list
-	mov	ebp, [timers_local + TIMERS.head + rcx*8]
-	mov	rsi, [timers_local + TIMERS.ptr]
-	mov	eax, [lapicT_time]
-	imul	ebp, sizeof.TIMER
-	cmp	[rbp + rsi + TIMER.wakeUpAt], rax
-	ja	.process_priority			; JUMP if closest timer time doesn't match
+	;-------------------------------------------------------------------------------------------
+	; We have 2 lists for timers. Determined by bit1 of "lapicT_flags";.
+	;   "lapicT_time" is 8bytes and when it overflows we change bit 1 of "lapicT_flags".
+	; Value of  "lapicT_flags[1]" bit determines in which list we add TIMER entries.
+	;				    and from which list we remove TIMER entries.
+	;-------------------------------------------------------------------------------------------
+	; We only check timer_list after "lapicT_time" (and therefore timer_list_id bit) was adjusted.
+	; If 4ms(run time without interruption) is not enforced by "timer_in" then late timers will
+	; still fire but much later. Thats why we make sure (in "timer_in" func) that there are no
+	; such timers on "timer_local"
+	;-------------------------------------------------------------------------------------------
+	; TODO: maybe we can check "timer_local" when exiting the timer handler
+	;	   if there are timers (maybe for other threads) than can be missed
+	;						    mainly during "lapicT_time" overflow
 
-	;============================================================
-	; delete last timer entry, we'll switch to this thread
-	;=============================================================
-	; input: rcx,r15,r13,r14, all other regs have undefined value
-.process_timer:
+
+	cmp	[timers_local + TIMERS.cnt + rcx*8], 0	; check if counter =0
+	jz	.process_priority_list
+
+	; check time if counter is not 0
 	mov	r8d, [timers_local + TIMERS.head + rcx*8]
 	mov	rsi, [timers_local + TIMERS.ptr]
-	mov	edi, r8d
+	mov	edi, r8d				; EDI - will be "1stFree"
 	imul	r8d, sizeof.TIMER
+	mov	rax, [lapicT_time]
+	mov	rbx, [rsi + r8 + TIMER.wakeUpAt]	; rbx = time of next timer trigered thread
+	btr	dword [lapicT_flags], 0
+	cmp	rbx, rax
+	ja	.process_priority_list			; JUMP if closest timer time doesn't match
 
-	; we wont enter another event until previous has finished (r8,rcx,rsi,rdi in use already)
-	; (!!! may get unlimited timeslice if new timer entry is constantly encountered)
-	;	but we can switch to another priority thread to fix this
-	movzx	eax, word [rsi + r8 + TIMER.gTID]
-	mov	ebp, [lapicT_ms]
-	imul	rax, 0x10000 * 512
-	lea	r9, [registers]
-	test	rax, rax
-	cmovz	rax, r9
-	mov	r10d, 4
-	imul	r10d, ebp
-	xor	r11, r11				; r11 = 0 = priority thread
-	test	qword [rax + 8192 + event_mask], 1	; [lapicT_currTID] didn't change
-	jnz	.exit
-
-	mov	rbx, rax
+;===================================================================================================
+; we will be switching to a thread on timer list
 
 	sub	[timers_local + TIMERS.cnt + rcx*8], 1
-	jc	k64err
 
 	mov	eax, dword [rsi + r8 + TIMER.next]
 	movzx	r9d, ax 				; next	r9   bp (point to 2nd)
@@ -160,143 +148,214 @@ int_lapicTimer:
 	mov	[rsi + r9 + TIMER.prev], cx
 	mov	[rsi + rax + TIMER.next], bp
 
-	mov	r9d, [timers_local + TIMERS.1stFree]
-	mov	r12, [rsi + r8 + TIMER.data2]		; r12	<<
-	mov	[rsi + r8 + TIMER.data2], r9
-	mov	[timers_local + TIMERS.1stFree], edi
+	mov	r9d, [timers_local + TIMERS.1stFree]	; where "1st free" points
+	mov	r12, [rsi + r8 + TIMER.data2]		; r12					<<
+	mov	[rsi + r8 + TIMER.data2], r9		; removed(freed) entry -> value of "1st free"
+	mov	[timers_local + TIMERS.1stFree], edi	; "1st free" -> removed(freed) entry
 
 	; we'll pass this additional data when we switch to this thread:
 	movzx	r9d, [rsi + r8 + TIMER.gTID]		; r9
-	mov	r13, [rsi + r8 + TIMER.data1]		; r13	<<
-	mov	r11, [rsi + r8 + TIMER.returnPtr]	; r11	<<
+	mov	r13, [rsi + r8 + TIMER.data1]		; r13					<<
+	mov	r11, [rsi + r8 + TIMER.handlerPtr]	; r11					<<
 
 	mov	[lapicT_currTID], r9w
 
-	;--------------------------------------------------------------------------------------------
-	; Timer handler always restores registers of prev event handler when timer handler is exited.
-	; These regs will be destroyed if timer handler interrupted by a thread switch.
-	; So we make another copy of these registers (at the end of this handler)
-	;--------------------------------------------------------------------------------------------
+	; Time has matched for this TIMER entry. We have r11 - timer handler will work for max 4ms.
+	; We ignore any other potential TIMER entries until timer handler exits.
 
-	mov	r10d, 4
-	imul	r10d, [lapicT_ms]
-	jmp	.exit
+	cmp	byte [rsi + r8 + TIMER.handlerPtr+7], 1 ; check if we only need to wake up thread
+	jnz	.calc_timeslice 			; jump if not (valid time handler present)
+
+	; at this point we are only waking threads from sleep:
+	;     a) we'll use different RIP later, at the end where we exit lapicT_handler
+	;     b) we won't exit into timer handler procedure
+	;     c) correct small timeslice & immediate code execution will still be achieved
+
+	; resume thread and put it back on priority list:
+
+	mov	r8, threads
+	mov	r10d, r9d
+	imul	r9, sizeof.THREAD
+	movzx	ebp, [r8 + r9 + THREAD.flags]		; get priority list ID, low 2 bits
+	and	ebp, 1000'0011b
+	btr	ebp, 7
+	jnc	k64err.lapT_noThreadSleep		; jump if thread not sleeping
+	and	word [r8 + r9 + THREAD.flags], 0xff7f
+
+	cmp	word [lapicT_pri0 + rbp*2], -1
+	jz	.one_entry
+
+	movzx	edi, word [lapicT_pri0 + rbp*2] 	; next thread to run
+	mov	esi, edi
+	imul	edi, sizeof.THREAD
+	movzx	eax, [r8 + rdi + THREAD.prev]		; next(1st) thread to run points to last to run
+	mov	ecx, eax
+	imul	eax, sizeof.THREAD
+
+	; insert new thread to be last to run
+	mov	[r8 + r9 + THREAD.prev], cx		; --> last to run
+	mov	[r8 + r9 + THREAD.next], si		; --> 1st to run
+	mov	[r8 + rdi + THREAD.prev], r10w		; 1st to run --> new
+	mov	[r8 + rax + THREAD.next], r10w		; last to run --> new
+	jmp	.calc_timeslice
+
+.one_entry:
+	mov	[lapicT_pri0 + rbp*2], r10w
+	mov	[r8 + r9 + THREAD.next], r10w
+	mov	[r8 + r9 + THREAD.prev], r10w
+	jmp	.calc_timeslice
 
 ;===================================================================================================
+; we will be switching to a priority thread
 
-	align 8
-.process_priority:
+.process_priority_list:      ;TODO:	; maybe deivce driver priority can have many dev drivers (threads)
+					; running as long as priority timeslice doesn't expire
+				 ; all other priorities - one thread per one timeslice
+				 ; dev drivers - many threads per one timeslice
 
-	mov	eax, [lapicT_flags]
-	mov	esi, [lapicT_priQuene]			; dword (10'00'01'11'00'01'10'00'01'00b shl 8)
-	mov	ebp, 1111b
-	xor	edx, edx
+	mov	esi, [lapicT_priQuene]			;	 12 10	e  c  a  8  6  4  2  0
+	mov	ebp, 1111b				; dword (10'00'01'11'00'01'10'00'01'00b shl 8)
+	xor	edx, edx				;	  2  0	1  3  0  1  2  0  1  0
 
 .search_priorities:
 	movzx	ecx, sil				; get index where to look for priority
 	mov	edi, esi
 	add	ecx, 8					; remove the index
-	shr	edi, cl 				; low 2bits is the priority number
-	lea	ecx, [rcx - 6]				; switch to next index
-	and	edi, 11b
+	shr	edi, cl 				; low 2bits is the priority list number
+	sub	ecx, 6					; switch to next index
+	and	edi, 11b				; = priority list number
 	btr	ebp, edi
 	cmp	ecx, 9*2
-	movzx	edi, word [lapicT_pri0 + rdi*2] 	; get thread index
+	movzx	r9d, word [lapicT_pri0 + rdi*2] 	; get thread index
 	cmova	ecx, edx
 	mov	sil, cl 				;					     ESI
+	cmp	r9d, 0xffff				; exit if non 0xffff thread index is found   EDI
+	jnz	@f
 	test	ebp, ebp				; exit if all priorities have been looked at
 	jz	k64err.lapT_noThreads
-	cmp	edi, 0xffff				; exit if non 0xffff thread index is found   EDI
-	jz	.search_priorities
-
-	; calculate time-in for closest timer entry/thread (on current add_list)
-	;-------------------------------------------------------------------------
-
-	xor	ecx, ecx
-	bt	eax , 1 				; using "old" add_list if lapicT_time overflown
-	setc	cl
-	mov	r8,  [timers_local + TIMERS.ptr]
-	mov	r9d, [timers_local + TIMERS.head + rcx*8]
-	mov	ebp, -1 				; default timesclice for timer-triggered thread
-	cmp	[timers_local + TIMERS.cnt + rcx*8], 0
-	jz	.calc_ticks
-
-	imul	r9d, sizeof.TIMER
-	mov	rbp, [r8 + r9 + TIMER.wakeUpAt] 	; lapic timer ticks, (currently, 4byte value)
-
-	test	eax, 1
-	jnz	.process_timer				; meant to be kernel panic
-
-	sub	ebp, [lapicT_time]			; ebp = timeslice in which to switch thread
-	jbe	k64err.lapicT_wakeUpAt_smaller
-
-	; continue with calculating lapic timer ticks for the priority thread
-	;-------------------------------------------------------------------------
-.calc_ticks:
-	mov	[lapicT_currTID], di
+	jmp	.search_priorities
+@@:
 	mov	[lapicT_priQuene], esi
+	mov	[lapicT_currTID], r9w
 
-	; TODO: set flags
+;===================================================================================================
+.calc_timeslice:
 
-	imul	rdi, sizeof.THREAD
-	xor	r11, r11				; =0, RIP taken from thread control block
-	movzx	eax, [threads + rdi + THREAD.time2run]	; in microseconds
-	xor	edx, edx
-	mov	esi, 1000
+	movzx	r9d, word [lapicT_currTID]
+	mov	eax, 4000				; 4ms = fixed timeslice for any timer handler
+	test	r11, r11
+	jnz	@f					; jump if thread is from timer list
+
+	imul	r9d, sizeof.THREAD
+	mov	eax, threads
+	movzx	ecx, [rax + r9 + THREAD.next]
+	movzx	eax, [rax + r9 + THREAD.time2run]
+;mov rax,0x0fffffff
+;mov rax,0x006fffff
+;mov rax,0x0013ffff
+	mov	[lapicT_pri0 + rdi*2], cx
+@@:
+	; convert microseconds to lapic timer ticks:
+	xor	edx, edx				; convert to milliseconds first
+	mov	esi, 1000				;     as they reduce runding error
+	div	esi
 	mov	r8d, [lapicT_ms]
-	div	esi					; to MS:US - milliseconds reduces round errors
 	mov	r9d, [lapicT_us]
 	imul	rax, r8
 	imul	rdx, r9
-	mov	esi, 0xffffffff
+	mov	esi, 0xffff'fff0
 	add	rax, rdx
-	cmp	rax, rsi				; eax = 4byte # of lapic ticks
+	mov	r10d, eax				; EAX  =  R10  = 4byte # of lapic ticks
+	cmp	rax, rsi
 	jae	k64err.lapT_manyTicks
 
-	; choose minimum value (new thread timeslice) and run the priority thread
-	;-------------------------------------------------------------------------
-	cmp	ebp, eax
-	cmovb	eax, ebp
-	mov	r10d, eax
+	; compare desired timeout in R10 with any future TIMER trigered threads ;
+	;     we could cut the mandatory 4ms run-without-interruption time	;
+	;  "timer_in" function needs to make sure that no such timers present	;
+	;-----------------------------------------------------------------------;
+	; and we mess with the timeslice for priority trigerred threads - they	;
+	; can potentially run for only a few lapicT ticks; < 1 microsecond :(	;
+	;-----------------------------------------------------------------------;
+	; anyhow, current non-timer thread must run just enough for a timer to
+	; fire on time
+
+	test	r11, r11				; if !=0 then timer runs for a 4ms max
+	jnz	.exit					;   all other timers (if present) ignored
+
+	bt	dword [lapicT_flags], 0
+	jc	@f					; jump if no timer entry on curr list
+
+	; At this point, we DO have future TIMER entry on CURRENT timer_list id
+	; and we may or may not need to adjust current thread timeslice
+	;-------------------------------------------------------------------------------------------
+	; no need to worry about potential lapicT_time overflow earlier, its in the past
+
+	mov	rcx, rbx				; rbx = 8byte "TIMER.wakeUpAt"
+	sub	rbx, [lapicT_time]
+	cmp	rbx, rsi
+	jae	k64err.lapT_manyTicks
+
+	cmp	ebx, eax
+	cmovbe	r10d, ebx
+	jmp	.exit
+@@:
+	; check potential timers on the opposite timer list
+	; but no worries, if current timeslice doesn't overflow the time
+	add	rax, [lapicT_time]
+	jnc	.exit
+
+	;-------------------------------------------------------------------------------------------
+	xor	ecx, ecx
+	bt	dword [lapicT_flags], 1
+	setnc	cl					; get opposite/inverted timer_list id
+	cmp	[timers_local + TIMERS.cnt + rcx*8], 0	; check if counter =0
+	jz	.exit
+
+	mov	edi, [timers_local + TIMERS.head + rcx*8]
+	mov	rsi, [timers_local + TIMERS.ptr]
+	xor	rcx, rcx
+	imul	edi, sizeof.TIMER
+	not	rcx
+	sub	rax, [lapicT_time]			; restore time-in, instead of time-at
+	mov	rbx, [rsi + rdi + TIMER.wakeUpAt]
+	sub	rcx, [lapicT_time]
+	mov	esi, 0xffff'fff0
+
+	;lea rbx, [rbx + rcx + 1]
+	add	rcx, 1
+	jc	.exit					; jump if lapicT_time=0
+	add	rbx, rcx
+	jc	.exit					; jump if result doesnt fit into 8byte val
+	cmp	rbx, rsi
+	ja	.exit					; large value means "wakeUpAt" on next timer
+							;    list & "lapicT_time" are too far apart
+	cmp	eax, ebx
+	cmovb	r10d, eax
 
 ;===================================================================================================
-;	check if we need to switch add_list id and therefore verify counter
+.exit:
 
-.exit:							       ; r10 r14
-	btr	dword [lapicT_flags], 0
-	jnc	@f
+	cmp	r10, 0
+	jle	k64err.lapT_manyTicks
+	cmp	r10d, 0xffff'fff0
+	ja	k64err.lapT_manyTicks
 
-	xor	ecx, ecx
-	btc	dword [lapicT_flags], 1 		; switch add_list id
-	setc	cl					; ecx = old add_list id
-	xor	ecx, 1					; old id -> new 	 (setnc cl)
-
-	; add_list counter must be zero if we did switch the lists (no leftover timers present)
-	cmp	[timers_local + TIMERS.cnt + rcx*8], 0
-	jnz	k64err.lapT_timerCntNot0
-
-;---------------------------------------------------------------------------------------------------
-;	calculate from where to restore registers
-@@:
+	; calculate from where to restore registers
 	movzx	eax, word [lapicT_currTID]
-	imul	rax, 0x10000 * 512
-	cmp	rax, 0
-	jnz	@f
-	mov	r9, [lapicT_kPML4]
-	lea	rax, [registers]
-	jmp	.switch
-@@:
-	lea	rdi, [rax + 8192]
-	mov	rsi, 0xffff'fff0'0000'0000
-	shr	rdi, 12
-	or	rdi, rsi
-	mov	r9, [rdi*8]
+	mov	rsi, threads
+	mov	edi, eax
+	mov	r9, 0x8000000000
+	imul	edi, sizeof.THREAD
+	imul	rax, r9 				; RAX
+	mov	r9, qword [rsi + rdi + THREAD.pml4-2]
+	mov	rbx, rax				; RBX  (512GB aligned, min 4KB in the future)
+	shr	r9, 16
 
-;---------------------------------------------------------------------------------------------------
-;	update CR3, process timer events if any, update exit point from this handler
+;===================================================================================================
+;	update CR3, process timer events if any, update target exit point from this lapicT handler
 .switch:
-	mov	rdi, 0x7fff'ffff'f000			; reload or not CR3 when switching to sys thread ???
-	and	r9, rdi
+	mov	rdi, 0x7fff'ffff'f000			; we reload CR3 for system thread which can
+	and	r9, rdi 				;	have all treads mapped at the same time
 	mov	cr3, r9 				; switch to another thread PML4
 
 	mov	rcx, [rax + 512 + 120]			; rip
@@ -305,22 +364,30 @@ int_lapicTimer:
 	mov	rbp, [rax + 512 + 144]			; rsp
 	mov	rdx, [rax + 512 + 152]			; ss
 
-	test	rbx, rbx				; do we run new thread because of timer entry ?
-	jz	@f					; jump if no
+	test	r11, r11				; do we run new thread because of timer entry ?
+	jz	.priority_thread			; jump if no (R11 = 0 or next RIP where we jump)
+	rol	r11, 8
+	cmp	r11b, 1 				; are we simply waking up a thread ?
+	jz	.priority_thread			; jump if yes
+	ror	r11, 8
+
+							; DIFFERENT: but timer_exit function still needs
+							;   to restore previous sleep state
+							;   if different timer fired while we are
+							;   sleeping with a timeout
 	mov	[rbx + 4096], rcx
 	mov	[rbx + 4096 + 8], rsi
 	mov	[rbx + 4096 + 16], rdi
 	mov	[rbx + 4096 + 24], rbp
 	mov	[rbx + 4096 + 32], rdx
-@@:
-	test	r11, r11
-	jz	.priority_thread
+	or	rbx, 1					; use bit0 due to lack of registers							   ; normally RBX is 512GB aligned (min 4KB in future)
 .sz=32
-	sub	rbp, .sz				; could get #PF as soon as we touch user stack
+	; can get #PF as soon as we touch user stack
+	sub	rbp, .sz
 	mov	qword [rbp], .sz			; number of bytes before "iret" frame
 	mov	qword [rbp + 8], r13			; user data1
 	mov	qword [rbp + 16], r12			; user data2
-	mov	qword [rbp + 24], 0			; user data3   ; 1a026 de1f5e2a
+	mov	qword [rbp + 24], 0			; user data3
 	jmp	@f
 
 .priority_thread:
@@ -336,8 +403,11 @@ int_lapicTimer:
 
 	fxrstor [rax]
 
-	mov	dword [qword lapic + LAPICT_INIT], r10d
-
+	mov	dword [qword lapic + LAPICT_INIT], -1
+	and	dword [qword lapic + LAPICT], not (1 shl 16)	; enable interrupt delivery
+	mov	rcx, cr0					; serializing instr, probably not needed
+	mov	dword [qword lapic + LAPICT_INIT], r10d 	; new timeslice (must be reasonably large)
+								;		!! currently not checked !!
 	mov	r14, [rax + 512]
 	mov	rdi, [rax + 512 + 8]
 	mov	rsi, [rax + 512 + 16]
@@ -351,9 +421,17 @@ int_lapicTimer:
 	mov	r13, [rax + 512 + 104]
 	mov	r15, [rax + 512 + 112]
 
-	; save regs for timer handler to restore
-	test	rbx, rbx				; do we run thread because of new timer entry ?
-	jz	@f					; jump if no
+	;--------------------------------------------------------------------------------------------
+	; Timer handler always restores registers of prev event handler when timer handler is exited.
+	; These regs will be destroyed if timer handler interrupted by a thread switch, or by running
+	;								  timer handler proc
+	; So we make another copy of these registers bellow.
+	;--------------------------------------------------------------------------------------------
+
+	btr	rbx, 0					; do we run thread because of new timer entry ?
+	jnc	@f					; jump if no
+
+	; save registers 2nd time for timer handler to restore
 
 	fxsave	[rbx + 4096 + 192]
 
@@ -377,8 +455,8 @@ int_lapicTimer:
 	mov	rbp, [rax + 512 + 96]		; rax
 	mov	[rbx + 4096 + 136], rbp
 
-	or	dword [rbx + 8192 + event_mask], 1
-@@:
+	or	dword [rbx + 8192 + event_mask], 1	; this mem location belongs to the thread
+@@:							;	  but user thread can't modify it
 	mov	rbx, [rax + 512 + 24]
 	mov	rbp, [rax + 512 + 32]
 	mov	rax, [rax + 512 + 96]
@@ -386,25 +464,24 @@ int_lapicTimer:
 	; check if handler was called due to hadrware interrupt or with an "INT n" instruction
 	btr	dword [sp_lapicT_flags], 3		; always resets bit 3
 	jc	@f
+	;bt	 dword [qword lapic + 0x110], 0
+	;jnc	 k64err 				; bit set if IRQ triggered by lapic
 
 	add	rsp, 120 + 32
 	mov	dword [qword lapic + LAPIC_EOI], 0
 	iretq
 
-	align 8
-@@:	add	rsp, 120 + 32
+	align	4
+@@:	;bt	 dword [qword lapic + 0x110], 0 	; bit clear if IRQ fired using "int" instruction
+	;jc	 k64err
+	add	rsp, 120 + 32
 	iretq
-
-
-
-; we need to return number lapicT ticks to the caller so that it can schedule next timer
-; so that resonable periodic timer can be achieved
 
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 
-	align 8
+	align 4
 lapicT_calcSpeed:
 	push	rax rcx rdx rsi rdi rbp
 
@@ -463,4 +540,5 @@ lapicT_calcSpeed:
 
 	pop	rbp rdi rsi rdx rcx rax
 	ret
+
 

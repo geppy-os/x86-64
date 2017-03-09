@@ -6,9 +6,10 @@
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
-; timer handler needs to restore all registers used (saving is done by lapicTimer)
+; timer handler needs to restore all registers used (saving is done by lapicTimer handler)
+; Timer handler needs to restore prev state of the thread: sleep or not sleep
 
-	align 8
+	align 4
 timer_exit:
 	cli						; maybe can use noThreadSw here
 	mov	rax, cr8				;   and cli at the end, before iret
@@ -17,10 +18,8 @@ timer_exit:
 	mov	r15, 0x400000
 
 	movzx	r13d, word [lapicT_currTID]
-	imul	r13, 0x10000 * 512
-	lea	rax, [registers]
-	test	r13, r13
-	cmovz	r13, rax
+	mov	rax, 0x8000000000
+	imul	r13, rax
 
 	btr	dword [r13 + 8192 + event_mask], 0
 
@@ -55,55 +54,32 @@ timer_exit:
 
 	iretq
 
-
-	; ?????
-	; timer threads may be sleeping
-	; we need to make sure they are on ready to run priority list, since 4ms won't be enough
-	; if thread was sleeping - it can run full timeslice
-	;
-	; for device drivers we put thread on running list, so that next thread
-	; switch goes to this thread (if thread requests)
-
 ;===================================================================================================
-;   timer_at
+;   timer_in  -  alert in some time, for small delays only   ///////////////////////////////////////
 ;===================================================================================================
-; input: r8  - time in special format (month/day
-;	 r9  - ptr to entry point >=0, or 0 if suspend process and resume after timer fires
-;	 r12 - data #1
-;	 r13 - data #2
-
-
-	align 8
-timer_at:
-	push	rax rcx rsi rdi
-
-
-
-	pop	rdi rsi rcx rax
-	ret
-
-;===================================================================================================
-;   timer_in	 alert in some time, for small delays only
-;===================================================================================================
+; running this func will interfere with time during which current thread is running without
+; accounting the difference anywhere (like in lapicTimer interrupt handler for a example)
+;-------------------------------------------------------------------------------------------------
 ; input: r8  - time in microseconds  <= 1 second
-;	 r9  - ptr to entry point,
-;	       OR 0 if suspend process and resume after timer fires (r12,r13 ignored in this case)
+;	 r9  - valid pointer to entry point
 ;	 r12 - any user data #1
 ;	 r13 - any user data #2
 
-;	 r14 - reference(supplied by user) lapicT_time, 4bytes
 
-	align 8
+	align 4
 timer_in:
-	push	rax rdx rcx rsi rdi rbp rbx
-	cmp	r8, 10				; min 10us
-	jb	.err
-	cmp	r8, 1000*1000			; max 1s
-	ja	.err
+	push	rax rdx rcx rsi rdi rbp rbx r14 r9
+	cmp	r8, 10					; min 10us
+	jb	k64err.timerIn_min10us
+	cmp	r8, 1000*1000				; max 1s
+	ja	k64err.timerIn_max1s
+
+	mov	r15, 0x400000
+
+.minDelay = 20 ; in lapic timer ticks
 
 	; convert to milliseconds + microseconds first, then to lapic timer ticks
-	; not sure how accurate lapic_timer ticks per microsecond are
-	; The milliseconds simply reduces rounding errors.
+	; The milliseconds simply reduce rounding errors later (lapic_ticks per ms).
 	mov	esi, 1000
 	xor	eax, eax
 	xor	edx, edx
@@ -114,106 +90,145 @@ timer_in:
 	mov	ecx, edx
 	imul	rax, rdi
 	imul	rcx, rsi
-	add	rax, rcx			; eax = lapic timer ticks
-	cmp	rax, 0x6fff'ffff		;	must not exceed 0x6fff'ffff
+	mov	edi, 0xffff'fff0
+	add	rax, rcx				; eax = lapic timer ticks
+
+	cmp	rax, rdi
 	ja	k64err.timerIn_manyLapTicks
+	cmp	eax, .minDelay
+	jb	k64err.timerIn_manyLapTicks
 
-	;-------------------------------------------------------------------------------------
-@@:
+;---------------------------------------------------------------------------------------------------
 	call	noThreadSw
-	cmp	[timers_local + TIMERS.1stFree], -1
-	jnz	@f
-
-	call	resumeThreadSw
-
-	push	rax r8 r9 r12 r13 r14
-
-	call	timer_memAlloc
-
-	pop	r14 r13 r12 r9 r8 rax
-
-	jmp	@b
-@@:
-	;-------------------------------------------------------------------------------------
+	or	dword [qword lapic + LAPICT], 1 shl 16	; Mask timer.
+	mov	rcx, cr0
 	push	rax
 
-	xor	r14, r14
-	bt	dword [lapicT_flags], 1      ; counter 0 ??? on new list
-	mov	r8d, [lapicT_time]
-	setc	r14b
-	add	r8d, eax			; += current time
-	jnc	@f
+	; by the way, "lapicT_time" will overflow max 1 time if we add multiple 4byte values to it.
 
-	; switch timer list if overflow (counter for new add_list must be 0)
-	mov	rax, [timers_local + TIMERS.ptr]
-	xor	r14, 1
-	xor	dword [lapicT_flags], 10b
-	cmp	[timers_local + TIMERS.cnt + r14*8], 0
-	jnz	k64err.timerIn_timerCntNot0
+	mov	ebp, [qword lapic + LAPICT_INIT]	; INIT wont change while this func is running
+	mov	ebx, [qword lapic + LAPICT_CURRENT]	; INIT >= LAPICT_CURRENT (CURRENT counts down)
+	mov	edi, ebp
+	sub	edi, ebx				; if INIT=0 then CURRENT also =0
+
+	; this avoids some race conditions
+	cmp	ebx, .minDelay				; if leftover LAPICT_CURRENT is at critical
+	ja	@f
+	mov	edi, ebp				;      then assume thread ran its
+	xor	ebx, ebx				;	 full timeslice already
+	;mov	[qword lapic + LAPICT_INIT], 0
 @@:
-	push	r8
+	; account for elapsed time as usual
+	xor	ecx, ecx
+	add	[lapicT_time], rdi			; TODO: need update other thread info - same place where update time
+	setc	cl
+	shl	ecx, 1
+	xor	[lapicT_flags], ecx			; change current timer_list id if overflow
+	push	rbx					; how many ticks left
+
+	; TIMER entry goes on opposite list if there is future time overflow for the timer.
+	; (to simplify logic and code we dont check if that list is empty or not)
+	xor	r14, r14
+	bt	dword [lapicT_flags], 1 		; get timer list id
+	mov	r8, [lapicT_time]
+	setc	r14b					; save timer list id into R14
+	add	r8, rax 				; time += time offset
+	adc	r14d, 0 				; time overflow ?
+	and	r14d, 1 				; 0 + 1(cf) and 1 = 1  ;;;  1 + 1(cf) and 1 = 0
+
 	lea	rbp, [timers_local]
 	call	timer_insert
-	pop	rax				; time-at (adjusted to current local time)   rax
-	pop	r8				; time-in (original input in lapicT ticks)	r8
+	pop	rbx					; lapicT ticks left (=LAPICT_CURRENT)
+	pop	r8					; time-in (original input in lapicT ticks)
+	jc	k64err
 
-	;-------------------------------------------------------------------------------------------
-	; we are running on behalf of some thread and we are adding timer for the same thread
-	; we can simply put a new value into LAPICT_INIT after updating lapicT_time
-	; if noThreadSw is active then none of the vars are changed except bit3 in lapicT_flags
-	;-------------------------------------------------------------------------------------------
+	cmp	byte [rsp+7], 0x01			; do we want to sleep? top byte of the handler
+	jnz	.no_sleep
 
-; device ints can still fire, and so what?
+;---------------------------------------------------------------------------------------------------
+;///////////////////////   stop timer, run next thread
+;---------------------------------------------------------------------------------------------------
+; Current thread is going to sleep. Switch to sheduler right away - it'll see timer entry and set for
+; current thread to wake up. Meanwhile some other priority thread will be running.
 
-	cmp	dword [qword lapic + LAPICT_INIT], 0
-	jz	@f
-	cmp	r8d, [qword lapic + LAPICT_CURRENT]
-	jae	.ok					; need >= left, lapicT handler handles timeouts
-@@:
-	or	dword [qword lapic + LAPICT], 1 shl 16	; mask timer, won't let it fire
-	mfence
-	bt	dword [lapicT_flags], 3
-	jc	.ok					; jump if managed to fire before we masked it
 
-	mov	edi, [qword lapic + LAPICT_INIT]
-	sub	edi, [qword lapic + LAPICT_CURRENT]	; init_0 - current_? = 0
-;reg rdi, 10c2
-	add	[lapicT_time], edi
-	jnc	@f
+	movzx	r8d, word [lapicT_currTID]
+	call	thread_sleep.sleep			; r8 is the only input
 
-	; shall we remove potential timers ?? hmm ? can they exist on new add_list id that we switched?
+	mov	dword [qword lapic + LAPICT_INIT], 0
+	mov	rax, cr0
 
-	xor	ecx, ecx
-	btc	dword [lapicT_flags], 1
-	setnc	cl
-	cmp	[timers_local + TIMERS.cnt + rcx*8], 0
-	jnz	k64err.timerIn_timerCntNot0_1
-@@:
-	mov	dword [qword lapic + LAPICT_INIT], -1		; very large value for timer
-	and	dword [qword lapic + LAPICT], not (1 shl 16)	; unmask timer = generate interrupt
-	mov	dword [qword lapic + LAPICT_INIT],r8d		; reasonable value for timer
+	; unconditional "resumeThreadSw" function:
+	and	dword [lapicT_flags], not 4		; disable request to stop thread switch
+	mov	rax, cr0				; serializing instr. (AND executed before OR)
+	or	dword [lapicT_flags], 1 shl 3		; skip EOI
 
-	;-------------------------------------------------------------------------------------------
-.ok:	and	dword [qword lapic + LAPICT], not (1 shl 16)
+	mov	rax, cr0
+	and	dword [qword lapic + LAPICT], not( 1 shl 16)
+
+	mov	rax, cr0
+	int	LAPICT_vector				; fire lapicT handler that needs to reenable ints
+
+	; We'll return here after some time and quit this function and maybe quit syscall as needed
+	; Timer will put thread on ready-to-run list and return here intead of timer handler proc
+	; Code bellow will still use very short timeslice - as meant for a timer handler
+
+	; ?? but until we return here we will be in a syscall with unrestored registers ??
+	;   how many simultaneous syscalls like that ?
+	; we could save these regs somewhere else
 
 	clc
-@@:	call	resumeThreadSw
-	pop	rbx rbp rdi rsi rcx rdx rax
+	jmp	.exit2
+
+;---------------------------------------------------------------------------------------------------
+;///////////////////////  continue running current thread as leftover timeslice allows
+;---------------------------------------------------------------------------------------------------
+.no_sleep:
+	cmp	ebx, r8d				; Chose smallest interval and set it. Either
+	cmovb	r8d, ebx				; timer-in value or time left for trhread to run
+
+	; we put a new value into LAPICT_INIT to interrupt current thread at different time
+	mov	rax, cr0
+	mov	dword [qword lapic + LAPICT_INIT], -1		; very large value for timer
+	and	dword [qword lapic + LAPICT], not (1 shl 16)	; unmask timer = generate interrupt
+	  ; SMI is the only problem, and only if it
+	  ;	saves (or restores) CPU state for around 0xffff'ffff lapic ticks
+	mov	rax, cr0
+	mov	dword [qword lapic + LAPICT_INIT],r8d		; reasonable value for timer
+	mov	rax, cr0
+
+	; if r8=0 then lapicTimer is stopped and will never fire
+	;    need to setup enviroment to trigger lapicT manually and correctly
+	test	r8d, r8d
+	jnz	.ok
+
+	; "resumeThreadSw" will now manually trigger "lapicT_hanlder"
+	bts	dword [lapicT_flags], 3
+
+.ok:	clc
+.exit:	call	resumeThreadSw
+.exit2: pop	r9 r14 rbx rbp rdi rsi rcx rdx rax
 	ret
 .err:
 	stc
-	jmp	@b
+	jmp	.exit2
 
 
 ;===================================================================================================
-;   timer_insert
+;   timer_insert   /////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
-; input:  r8
-;
+; input:  r14, rbp (for the function to work correctly)
+;	  r8, r12, r13, r9  (user input data)
+;---------------------------------------------------------------------------------------------------
 ; assume that all registers modified
+; function must not use "resumeThreadSw" function
+;-------------------------------------------------------------------------------------------------
 
+; TODO: need to ensure that timer entries are 4ms apart !
+;				previous and next extries
+;	otherwise need some local queue
 
-	 align 8
+	 align 4
 timer_insert:
 	cmp	dword [rbp + TIMERS.cnt + r14*8], 0
 	jz	.1st_entry
@@ -230,7 +245,7 @@ timer_insert:
 	mov	esi, dword [rdi + rax + TIMER.data2]	; get next free entry
 	mov	r11w, [lapicT_currTID]
 
-	mov	[rdi + rax + TIMER.returnPtr], r9
+	mov	[rdi + rax + TIMER.handlerPtr], r9
 	mov	[rdi + rax + TIMER.data1], r12
 	mov	[rdi + rax + TIMER.data2], r13
 	mov	[rdi + rax + TIMER.wakeUpAt], r8
@@ -269,7 +284,7 @@ timer_insert:
 	ret
 
 ;---------------------------------------------------------------------------------------------------
-	align 8
+	align 4
 .1st_entry:
 	mov	eax, [rbp + TIMERS.1stFree]
 	mov	rsi, [rbp + TIMERS.ptr]
@@ -282,7 +297,7 @@ timer_insert:
 	mov	dword [rbp + TIMERS.1stFree], edi
 	mov	dword [rbp + TIMERS.cnt + r14*8], 1
 
-	mov	[rsi + rcx + TIMER.returnPtr], r9
+	mov	[rsi + rcx + TIMER.handlerPtr], r9
 	mov	[rsi + rcx + TIMER.data1], r12
 	mov	[rsi + rcx + TIMER.data2], r13
 	mov	[rsi + rcx + TIMER.wakeUpAt], r8
@@ -291,76 +306,6 @@ timer_insert:
 	mov	[rsi + rcx + TIMER.gTID], r11w
 	jmp	.ok
 
-;===================================================================================================
-;
-;	 align 8
-;timer_remove:
-;
-;	   ; theres is a separate remove in lapic timer handler whch removes one entry - the "head"
-;
-;	 ret
-
-;===================================================================================================
-;   timer_memAlloc
-;===================================================================================================
-
-	align 8
-timer_memAlloc:
-
-	; code bellow is waiting for a proper "malloc" fnction, and "mem_free"
-
-	push	r8 r9 r12 r13 r14
-
-	lea	rbp, [timers_local]
-	mov	rax, [rbp + TIMERS.ptr] 	; could be 0, ok
-	mov	r9d, [rbp + TIMERS.blockSz]
-	mov	r8, rax
-	mov	ecx, r9d
-	add	r9d, 16384
-	shr	r8, 14
-	shr	r9d, 14
-
-	mov	rax, 0xa00000/16384
-	mov	r9, 0x200000/16384
-	mov	r8, rax
-	shl	rax, 14
-	mov	r12d, PG_P + PG_RW + PG_ALLOC
-	call	alloc_linAddr
-	jc	k64err.allocLinAddr		; need realloc without freeing already allocated mem
-
-	pop	r14 r13 r12 r9 r8
-
-	call	noThreadSw
-
-	; TODO:
-	; by this time "1stFree" might be different (!= -1)
-	; different thread migh've used timer_in, so "1stFree" and timer list is totally unpredictable
-
-
-	mov	qword [timers_local + TIMERS.ptr], rax		; rax
-	mov	dword [timers_local + TIMERS.blockSz], 16384	; ecx
-	mov	dword [timers_local + TIMERS.1stFree], 0
-	mov	dword [timers_local + TIMERS.cnt], 0
-	mov	dword [timers_local + TIMERS.cnt2], 0
-
-	; setup free entries:
-
-	mov	esi, 16384/sizeof.TIMER - 1
-	mov	ecx, 1
-@@:
-	mov	[rax + TIMER.data2], rcx		; temp next free entry
-	add	rax, sizeof.TIMER
-	add	ecx, 1
-	sub	esi, 1
-	jnz	@b
-
-	xor	ecx, ecx
-	not	rcx
-	mov	[rax + TIMER.data2], rcx
-
-	call   resumeThreadSw
-
-	ret
 
 ;===================================================================================================
 ; for debugging purposes:

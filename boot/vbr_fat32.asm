@@ -1,42 +1,47 @@
 
+; Distributed under GPL v1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
+; All Rights Reserved.
 
-    org $7c00
+
+    org 0x7c00
     use16
-
 VBR:
-    jmp   short @f
-    nop
+;    jmp   short @f
+;    nop
+;
+;    bpb_OEM		 db 'MSDOS5.0'
+;    bpb_SectSize	 dw 512 		 ; =512, Required
+;    bpb_SectPerClust	 db 0
+;    bpb_ReservedSect	 dw 0
+;    bpb_FATsCnt	 db 0
+;    bpb_RootSize	 dw 0
+;    bpb_TotalSect16	 dw 0
+;    bpb_Media		 db 0
+;    bpb_FatSize16	 dw 0
+;    bpb_TrackSect	 dw 0
+;    bpb_Heads		 dw 0
+;    bpb_hiddenSect	 dd 0
+;
+;    bpb_TotalSect	 dd 0
+;    bpb_fatSz		 dd 0
+;    bpb_extFlags	 dw 0
+;    bpb_ver		 dw 0
+;    bpb_rootClust	 dd 0
+;
+;
+;    bpb_FSInfo 	 dw 0
+;    bpb_backupBoot	 dw 0
+;			 rb 12
+;
+;    bpb_DriveNum	 db 0
+;    bpb_winSignature	 db 0
+;    bpb_bootSig	 db 0
+;    bpb_volID		 dd 0
+;    bpb_volLabel	 db "NO NAME	"
+;			 db "FAT32   "
 
-    bpb_OEM		db 'MSDOS5.0'
-    bpb_SectSize	dw 512			; =512, Required
-    bpb_SectPerClust	db 0
-    bpb_ReservedSect	dw 0
-    bpb_FATsCnt 	db 0
-    bpb_RootSize	dw 0
-    bpb_TotalSect16	dw 0
-    bpb_Media		db 0
-    bpb_FatSize16	dw 0
-    bpb_TrackSect	dw 0
-    bpb_Heads		dw 0
-    bpb_hiddenSect	dd 0
-
-    bpb_TotalSect	dd 0
-    bpb_fatSz		dd 0
-    bpb_extFlags	dw 0
-    bpb_ver		dw 0
-    bpb_rootClust	dd 0
-
-
-    bpb_FSInfo		dw 0
-    bpb_backupBoot	dw 0
-			rb 12
-
-    bpb_DriveNum	db 0
-    bpb_winSignature	db 0
-    bpb_bootSig 	db 0
-    bpb_volID		dd 0
-    bpb_volLabel	db "NO NAME    "
-			db "FAT32   "
+    org 0x7c00+90
+VBR2:
 
     offs	= lbaPacket-VBR
 ;===================================================================================================
@@ -44,7 +49,7 @@ VBR:
     xor     ebp, ebp
     mov     fs, dx			; FS[7:0] = drive #
     jmp     0:@f			; flush CS
-align 4 				; not really sure what alignment is for, might be for bug--
+
 lbaPacket:  dd $00'01'00'10		; $10 = size of LBA struct;  $01 = # of LBA sectors to read
 @@:
     mov     ss, bp
@@ -107,9 +112,9 @@ copyClusters:
 @@:
     mov     di, $8000
 find_file:
-    cmp     dword [di], "KIWI"
+    cmp     dword [di], "GEPP"
     jnz     @f
-    cmp     dword [di+4], "    "
+    cmp     dword [di+4], "Y   "
     jnz     @f
     cmp     dword [di+8], "IMG" + $20'00'00'00
     jnz     @f
@@ -162,7 +167,7 @@ read_FAT_chunk:
 
 ;===================================================================================================
 
-fileNotFound: db "kiwi.img missing"
+fileNotFound: db "geppy.img missing"
 
 Error:
     mov     ax, 3
@@ -248,9 +253,11 @@ readDisk:
     pop     ebx
     ret
 
+;    db (512-($-VBR2)-2) dup('+')
+;    dw $aa55
 
-    db (512-($-VBR)-2) dup('+')
-    dw $aa55
+;    db (512-($-VBR)-2) dup('+')
+;    dw $aa55
 
 
 

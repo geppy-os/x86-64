@@ -6,6 +6,7 @@
 	include 'fillSolidRect.asm'
 	include 'drawText.asm'
 	include 'copyRect.asm'
+	include 'cursors.asm'
 
 
 ;===================================================================================================
@@ -62,7 +63,7 @@ g2d_flush:
 ; this also clears sceen to R8 color if sucessfull, or maybe partially if failed
 ;===================================================================================================
 ; return: CF=0 of OK to use graphics (vidBuff.DRAWBUFF.ptr != 0)
-;	  CF=1 if don't mess with graphics. Or this func can fail with #PF  (vidBuff.DRAWBUFF.ptr = 0)
+;	  CF=1 if don't mess with graphics. This func can also fail with #PF (vidBuff.DRAWBUFF.ptr=0)
 ;
 ;---------------------------------------------------------------------------------------------------
 ; GUI can still run regadless of outcome and with current design it neeed screen refresh timer.
@@ -110,7 +111,7 @@ g2d_init_screen:
 	mov	[r9 + DRAWBUFF.clip.bottom], eax
 	mov	[r9 + DRAWBUFF.ptr], r10
 
-	; setup DoubleBuffer for VBE LFB (DoubleBuff line width must be multiple of 4 pixels)
+	; setup DoubleBuffer for VBE LFB (DoubleBuffer line width must be multiple of 4 pixels)
 
 	mov	r8, vidBuff
 	mov	[r8 + DRAWBUFF.clip.left], 0
@@ -141,6 +142,7 @@ g2d_init_screen:
 	jc	k64err.allocLinAddr
 
 	mov	[rcx + DRAWBUFF.ptr], rax
+	mov	word [qword txtVidCursor + rmData], 10
 
 	clc
 @@:	ret

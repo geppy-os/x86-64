@@ -3,38 +3,117 @@
 ; All Rights Reserved.
 
 
+
+;---------------------------------------------------------------------------------------------------
+; we prefere info from PCI config space directly if available
+; with ISA devs - there is no other way but to use ACPI
+; to connect PCI devs to IOAPIC we also need ACPI (DSDT & SSDTs)
+; but we'll use info from PCI config space first, wherever we can
+;---------------------------------------------------------------------------------------------------
+
+
+
 ;===================================================================================================
 ;   pci_figureMMIO  -  determine if mem mapped io is supported	 ///////////////////////////////////
 ;===================================================================================================
 
 pci_figureMMIO:
-	mov	esi, [qword acpi_mcfg + rmData]
-	mov	ebp, [qword acpi_mcfg_len + rmData]
-	test	esi, esi
-	jz	.done
-	test	ebp, ebp
-	jz	.done
 
-	;reg	 rsi, 80a
-	;reg	 rbp, 80a
+;	 mov	 esi, [qword acpi_mcfg + rmData]
+;	 mov	 ebp, [qword acpi_mcfg_len + rmData]
+;	 test	 esi, esi
+;	 jz	 .done
+;	 test	 ebp, ebp
+;	 jz	 .done
+
+	movzx	r8d, byte [qword max_pci_bus + rmData]
+
+	mov	esi, pciDevs + rmData			; rsi
+	mov	edx, [qword pciDevs_cnt + rmData]	; edx
+	sub	esi, 16
+	mov	edi, [qword devInfo_cnt]
+	mov	r9, [qword devInfo]			; r9
+	mov	ebp, edi				; ebp
+	imul	edi, devInfo_sz
+	lea	r9, [r9 + rdi - devInfo_sz]
+	cmp	ebp, 16
+	jl	k64err.notEnoughDevs
+
+
+.nextDev:
+	add	r9, devInfo_sz
+	add	ebp, 1
+	add	esi, 16
+	sub	edx, 1
+	jc	.done
+
+	; bus/dev/func (test MMIO here, and save new info into eax)
+	mov	eax, [rsi]
+
+
+	call	rand_tsc
+	shl	r8d, 16
+	or	r8d, ebp
+	bts	r8d, 15
+
+	movzx	edi, word [rsi + 4]
+	movzx	ecx, word [rsi + 6]
+	shl	rdi, 32
+	or	rdi, rcx
+	mov	ecx, [rsi + 8]
+	mov	eax, [rsi]
+
+	mov	dword [r9], r8d 		 ; kernel dev id
+	mov	dword [r9 + 4], eax		 ; bus/dev/func
+	mov	word  [r9 + 14], -1		 ; no thread assigned
+	mov	dword [r9 + 24], ecx		 ; 3byte classcode
+	mov	qword [r9 + 16], rdi		 ; vendor & device
+
+	push	rdx
+	cli
+	mov	eax, [rsi]
+	add	eax, 0x3c
+	mov	dx, 0xcf8
+	out	dx, eax
+	mov	dx, 0xcfc
+	in	eax, dx 			; AH: bits[3:0] = PCI A/B/C/D
+	shr	eax, 8
+	or	eax, 0x30			; bit5: classcode present flag, bit4: id present
+	sti
+	mov	[r9 + 9], al
+	pop	rdx
+
+	jmp	.nextDev
 
 .done:
+	sub	ebp, 1
+	mov	[qword devInfo_cnt], ebp
+
+
+macro asd{
+	mov	rsi, [qword devInfo]
+	reg	rsi, 101a
+	mov	ecx, [qword devInfo_cnt]
+@@:	reg	[rsi], 80a
+	reg	[rsi + 4], 40b
+	reg	[rsi + 9], 20b
+	reg	[rsi + 12], 20b
+	reg	[rsi + 13], 20b
+	add	rsi, devInfo_sz
+	sub	ecx, 1
+	jnz	@b
+}
+
 	ret
 
 ;===================================================================================================
-;   Get BAR info from PCI config space using either regular IO or mem mapped IO. MMIO is faster.
+;   Get BAR info from PCI config space using regular IO
 ;===================================================================================================
+
+; and maybe determine if mmio supported here
 
 pci_getBARs:
 
-;	 ; waiting for a proper malloc function
-;	 mov	 rdi, 0x1400000/16384
-;	 mov	 r9, 0x200000/16384
-;	 mov	 r8, rdi
-;	 shl	 rdi, 14
-;	 mov	 r12d, PG_P + PG_RW + PG_ALLOC
-;	 call	 alloc_linAddr
-;	 jc	 k64err.allocLinAddr		 ; need realloc without freeing already allocated mem
 
 	mov	r8, pciDevs + rmData - 16
 	mov	ebp, [qword pciDevs_cnt + rmData]
@@ -51,16 +130,7 @@ pci_getBARs:
 	mov	esi, [r8]
 	and	eax, 0x7f			; remove "mult-function device" bit
 	jnz	.next_dev			; skip non Type0 layout which only applies to bridges
-	bt	esi, 31
-	jnc	.mmio
-;--------------------------------------------------------------------- using regular IO ------------
 
-	jmp	.next_dev
-
-
-;-------------------------------------------------------------------- using Mem Mapped IO-----------
-	align 8
-.mmio:
 
 	jmp	.next_dev
 

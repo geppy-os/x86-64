@@ -98,7 +98,7 @@ g2d_fillRect:
 
 	; For rects that have 1-5px width, speed increase is minimum
 	; in comparasion to 6px width. Additional speed is mainly achieved
-	; due to combining instructions that execute in parallel
+	; due to combining instructions that draw 2 horizontal lines per single loop pass.
 
 	cmp	esi, 2
 	jb	.1px

@@ -1,12 +1,67 @@
 
-;---------------------------------------------------------------------------------------------------
-; Distributed under GPL v1 License
+; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
-;---------------------------------------------------------------------------------------------------
-
 
 
 ;===================================================================================================
+;///////////////////////////////////////////////////////////////////////////////////////////////////
+;===================================================================================================
+; input: r8 = number to convert
+;	 r9 = ptr to output buffer
+
+	align 4
+toAsciiDec8:
+	push	rdx rax rcx rdi rsi rbp rbx
+
+	mov	rax, [rsp + 7*8+8]
+	mov	rbp, [rsp + 7*8]
+	xor	ecx, ecx
+	xor	ebx, ebx
+
+	cmp	eax, 0
+	jge	@f
+	neg	eax
+	mov	byte [rbp], '-'
+	add	rbp, 1
+@@:
+	add	rbp, 9
+	not	rbx
+	;...
+
+
+
+	xor	ebx, ebx
+	mov	rsi, 0xcccc'cccc'cccc'cccd
+.next_digit:
+	mov	rcx, rax
+	add	ebx, 1
+	mul	rsi
+
+	cmp	ebx, 4
+	jnz	@f
+	mov	byte [rbp], ','
+	mov	ebx, 1
+	sub	rbp, 1
+@@:
+	mov	rdi, rdx
+	shr	rdi, 3
+	mov	rax, rdi
+	lea	rdi, [rdi + rdi*4]
+	lea	rdi, [rdi + rdi - '0']
+	sub	rcx, rdi
+	mov	[rbp], cl
+	sub	rbp, 1
+	test	rax, rax
+	jnz	.next_digit
+
+
+
+	pop	rbx rbp rsi rdi rcx rax rdx
+	ret	16
+
+;===================================================================================================
+
+
 ; input:  r8 - number
 ;	  r9 - mem ptr where to save
 ;	  r12b - how many 4bit digits to process starting with lowest bit in the r8 register
@@ -111,5 +166,31 @@ r8ToAsiiHex:
 	pop	rcx rax
 	ret
 
-; hex editor: get max width of all:   00 01 .. fe ff
-;	      divide max width in half - this will be separator (space betw bytes)
+;===================================================================================================
+toAsciiDec:
+	push	rax rcx rdi rsi rbp rbx
+	pop	rbx rbp rsi rdi rcx rax
+	ret
+
+toAciiHex:
+	ret
+
+toAsciiBin:
+	ret
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
