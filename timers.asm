@@ -54,6 +54,7 @@ timer_exit:
 
 	iretq
 
+
 ;===================================================================================================
 ;   timer_in  -  alert in some time, for small delays only   ///////////////////////////////////////
 ;===================================================================================================
@@ -65,10 +66,15 @@ timer_exit:
 ;	 r12 - any user data #1
 ;	 r13 - any user data #2
 
-
 	align 4
 timer_in:
 	push	rax rdx rcx rsi rdi rbp rbx r14 r9
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_TIMER_IN
+
+
 	cmp	r8, 10					; min 10us
 	jb	k64err.timerIn_min10us
 	cmp	r8, 1000*1000				; max 1s
@@ -122,6 +128,7 @@ timer_in:
 	xor	ecx, ecx
 	add	[lapicT_time], rdi			; TODO: need update other thread info - same place where update time
 	setc	cl
+	or	[lapicT_redraw], cl
 	shl	ecx, 1
 	xor	[lapicT_flags], ecx			; change current timer_list id if overflow
 	push	rbx					; how many ticks left
@@ -140,7 +147,7 @@ timer_in:
 	call	timer_insert
 	pop	rbx					; lapicT ticks left (=LAPICT_CURRENT)
 	pop	r8					; time-in (original input in lapicT ticks)
-	jc	k64err
+	jc	k64err.timerIn_insert
 
 	cmp	byte [rsp+7], 0x01			; do we want to sleep? top byte of the handler
 	jnz	.no_sleep
@@ -167,6 +174,11 @@ timer_in:
 	and	dword [qword lapic + LAPICT], not( 1 shl 16)
 
 	mov	rax, cr0
+
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_TIMER_IN
 	int	LAPICT_vector				; fire lapicT handler that needs to reenable ints
 
 	; We'll return here after some time and quit this function and maybe quit syscall as needed
@@ -207,7 +219,15 @@ timer_in:
 
 .ok:	clc
 .exit:	call	resumeThreadSw
-.exit2: pop	r9 r14 rbx rbp rdi rsi rcx rdx rax
+.exit2:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_TIMER_IN
+	popf
+
+	pop	r9 r14 rbx rbp rdi rsi rcx rdx rax
 	ret
 .err:
 	stc
@@ -306,35 +326,3 @@ timer_insert:
 	mov	[rsi + rcx + TIMER.gTID], r11w
 	jmp	.ok
 
-
-;===================================================================================================
-; for debugging purposes:
-
-macro asd{
-timer_list:
-	pushf
-	push	rax rcx rdx rsi rbp r8 r9
-	lea	rbp, [timers_local]
-	mov	ecx, [rbp + TIMERS.cnt]
-	mov	rsi, [rbp + TIMERS.ptr]
-	mov	eax, [rbp + TIMERS.head]
-	mov	edx, [rbp + TIMERS.1stFree]
-	reg	rcx, 404			; counter
-	reg	rax, 404				 ; head
-	reg	rdx, 404				       ; 1stFree
-
-@@:
-	sub	ecx, 1
-	jc	@f
-	imul	eax, sizeof.TIMER
-	mov	r8, [rsi + rax + TIMER.wakeUpAt]
-	mov	r9d, dword [rsi + rax + TIMER.next]
-	reg	r8, 100b
-	reg	r9, 80a
-	movzx	eax, r9w
-	jmp	@b
-@@:
-	pop	r9 r8 rbp rsi rdx rcx rax
-	popf
-	ret
-}

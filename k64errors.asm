@@ -10,7 +10,6 @@
 	align 8
 k64err:
 
-.allocLinAddr:
 
 .timerIn_timerCntNot0:
 .timerIn_timerCntNot0_1:
@@ -166,6 +165,79 @@ k64err:
 .maxThread1:
 	mov	dword [kernelPanic], 47
 	jmp	@f
+.allocLinA_bug1:
+	mov	dword [kernelPanic], 48
+	jmp	@f
+.allocLinA_bug2:
+	mov	dword [kernelPanic], 49
+	jmp	@f
+.alloc4kb_ram1:
+	mov	dword [kernelPanic], 50
+	jmp	@f
+.alloc4kb_ram2:
+	mov	dword [kernelPanic], 51
+	jmp	@f
+.alloc4kb_ram3:
+	mov	dword [kernelPanic], 52
+	jmp	@f
+.refill_pagingRam_noRAM:
+	mov	dword [kernelPanic], 53
+	jmp	@f
+.refill_pagingRam1:
+	mov	dword [kernelPanic], 54
+	jmp	@f
+.refill_pagingRam2:
+	mov	dword [kernelPanic], 55
+	jmp	@f
+.refill_pagingRam3:
+	mov	dword [kernelPanic], 56
+	jmp	@f
+.refill_pagingRam4:
+	mov	dword [kernelPanic], 57
+	jmp	@f
+.update_PF_ram1:
+	mov	dword [kernelPanic], 58
+	jmp	@f
+.update_PF_ram2:
+	mov	dword [kernelPanic], 59
+	jmp	@f
+.update_PF_ram3:
+	mov	dword [kernelPanic], 60
+	jmp	@f
+.update_PF_ram4:
+	mov	dword [kernelPanic], 61
+	jmp	@f
+.refill_pagingRam5:
+	mov	dword [kernelPanic], 62
+	jmp	@f
+.refill_pagingRam6:
+	mov	dword [kernelPanic], 63
+	jmp	@f
+.noRAM:
+	mov	dword [kernelPanic], 64
+	jmp	@f
+.pf1:
+	mov	dword [kernelPanic], 65
+	jmp	@f
+.pf2:
+	mov	dword [kernelPanic], 66
+	jmp	@f
+.pf3:
+	mov	dword [kernelPanic], 67
+	jmp	@f
+.pf4:
+	mov	dword [kernelPanic], 68
+	jmp	@f
+.lapT_largeInit:
+	mov	dword [kernelPanic], 69
+	jmp	@f
+.timerIn_insert:
+	mov	dword [kernelPanic], 70
+	jmp	@f
+.allocLinAddr:
+	mov	dword [kernelPanic], 71
+	jmp	@f
+
 @@:
 	;cli
 	;mov	 eax, -1
@@ -178,25 +250,15 @@ k64err:
 
 ;---------------------------------------------------------------------------------------------------
 .graphicsMode:
+	mov	r15, 0x400000
 
-	mov	word [qword txtVidCursor + rmData], 10
-
-	mov	r8, cr2
-	mov	r9, rsp
-	mov	r12d, 16
-	call	regToAsciiHex
-
-	lea	r8, [rsp + 16]
-	lea	rax, [text1]
-	mov	word  [r8], 10
-	mov	word  [r8 + 2], 70
-	mov	word  [r8 + 4], 16
-	mov	word  [r8 + 6], 0 ;font id
-	mov	dword [r8 + 8], 0xff ;color
-	mov	word  [r8 + 12], 0
-	mov	qword [r8 + 14], rsp
-	mov	r9, screen
-	call	txtOut_noClip
+	reg2	rax, 0x404
+	lea	rax, [rip]
+	shr	rax, 39
+	shl	rax, 39
+	reg2	[rax + 8192 + functions], 0x1004
+	reg2	[lapicT_currTID], 0x404
+	reg2	cr2, 0x1004
 
 	mov	edi, [kernelPanic]
 	lea	rsi, [k64err_messages]
@@ -214,21 +276,17 @@ k64err:
 	cmova	edi, ecx
 
 	mov	r8, rsp
-	lea	rax, [text1]
-	mov	word  [r8], 140
-	mov	word  [r8 + 2], 70
+	mov	rax, qword [vidDebug]
+	mov	[r8], rax
+	mov	rax, qword [vidDebug + 8]
+	mov	[r8 + 8], rax
 	mov	word  [r8 + 4], di
-	mov	word  [r8 + 6], 0 ;font id
-	mov	dword [r8 + 8], 0xff ;color
-	mov	word  [r8 + 12], 0
-	mov	qword [r8 + 14], rsi;rax ;text ptr
+	mov	qword [r8 + 14], rsi
 	mov	r9, screen
-	call	txtOut_noClip
+	call	g2d_drawText
 
 	cli
-	jmp	$;.graphicsMode
-
-
+	jmp	$
 
 ;---------------------------------------------------------------------------------------------------
 .panic:
@@ -323,6 +381,33 @@ k64err:
 	cmp	eax, 53
 	jb	.52
 	jz	.53
+	cmp	eax, 55
+	jb	.54
+	jz	.55
+	cmp	eax, 57
+	jb	.56
+	jz	.57
+	cmp	eax, 59
+	jb	.58
+	jz	.59
+	cmp	eax, 61
+	jb	.60
+	jz	.61
+	cmp	eax, 63
+	jb	.62
+	jz	.63
+	cmp	eax, 65
+	jb	.64
+	jz	.65
+	cmp	eax, 67
+	jb	.66
+	jz	.67
+	cmp	eax, 69
+	jb	.68
+	jz	.69
+	cmp	eax, 71
+	jb	.70
+	jz	.71
 	jmp	.err
 
 .0:	; #PF: happened while #PF handler was executing
@@ -545,6 +630,78 @@ k64err:
 	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
 	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('3' shl 16)
 	jmp	.err
+.54:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('4' shl 16)
+	jmp	.err
+.55:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('5' shl 16)
+	jmp	.err
+.56:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('6' shl 16)
+	jmp	.err
+.57:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('7' shl 16)
+	jmp	.err
+.58:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('8' shl 16)
+	jmp	.err
+.59:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('9' shl 16)
+	jmp	.err
+.60:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '6' + ('0' shl 16)
+	jmp	.err
+.61:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '6' + ('1' shl 16)
+	jmp	.err
+.62:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '6' + ('2' shl 16)
+	jmp	.err
+.63:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('3' shl 16)
+	jmp	.err
+.64:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('4' shl 16)
+	jmp	.err
+.65:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '6' + ('5' shl 16)
+	jmp	.err
+.66:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '6' + ('6' shl 16)
+	jmp	.err
+.67:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '6' + ('7' shl 16)
+	jmp	.err
+.68:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '5' + ('8' shl 16)
+	jmp	.err
+.69:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '6' + ('9' shl 16)
+	jmp	.err
+.70:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '7' + ('0' shl 16)
+	jmp	.err
+.71:
+	mov	dword [qword 22+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '_' + ('_' shl 16)
+	mov	dword [qword 26+txtVidMem], (0xcf shl 24) + (0xcf  shl 8) + '7' + ('1' shl 16)
+	jmp	.err
 .err:
 	;mov	 esi, [qword reg32.cursor]
 	;mov	 dword [qword reg32.cursor], 42
@@ -560,59 +717,72 @@ k64err:
 
 
 ;============================================================================ for debugging ========
-reg64_2:
+;	 mov	 r8, 0xc023456789abcdef
+;	 mov	 r9d, 0x1004
+
+reg64_:
 	pushfq
-	cli
-	push	rdx rbx rax rdi rsi rbp rcx
-	mov	rcx, rsp
-	sub	rsp, 128
-	movdqu	[rsp], xmm0
-	movdqu	[rsp + 16], xmm1
-	movdqu	[rsp + 32], xmm2
-	movdqu	[rsp + 48], xmm3
-	movdqu	[rsp + 64], xmm4
-	movdqu	[rsp + 80], xmm5
-	movdqu	[rsp + 96], xmm6
-	movdqu	[rsp + 112], xmm7
-	push	rcx
 
-	mov	r8, [rcx + 8*9]
+	push	rax
+	lea	rax, [rip]
+	shr	rax, 39
+	shl	rax, 39
+	bts	qword [rax + 8192 + functions], FN_REG64_
 
-	sub	rsp, 64
+	push	rdx rbx rdi rsi rbp rcx r15
+	sub	rsp, 32
+
+	cmp	[qword vidBuff + DRAWBUFF.ptr], 0
+	jz	.exit
+	cmp	[vidDebug.y], 300
+	ja	.exit
+
+	mov	r15, 0x400000
+	mov	rax, 'kkkkkkkk'
+	mov	[rsp], rax
+	mov	[rsp + 8], rax
+
+	shr	r9, 8
+	and	r9, 0xff
+	jz	.exit
+	cmp	r9, 16
+	jb	@f
+	mov	r9, 16
+@@:
+	mov	r12d, r9d
+	mov	word  [vidDebug.len], r9w
+	mov	[rsp + 16], r12
 	mov	r9, rsp
-	mov	r12d, 16
 	call	regToAsciiHex
 
-	movzx	eax, word [qword txtVidCursor + rmData]
-	add	word [qword txtVidCursor + rmData], 16*7+4
-
-	lea	r8, [rsp + 16]
-	mov	word  [r8], ax
-	mov	word  [r8 + 2], 120
-	mov	word  [r8 + 4], 16
-	mov	word  [r8 + 6], 0 ;font id
-	mov	dword [r8 + 8], 0xff ;color
-	mov	word  [r8 + 12], 0
-	mov	qword [r8 + 14], rsp
+	lea	r8, [vidDebug]
+	mov	qword [vidDebug.ptr], rsp
 	mov	r9, screen
-	call	txtOut_noClip
+	call	g2d_drawText
 
-	add	rsp, 64
+	mov	eax, [rsp + 16]
+	add	eax, 1
+	imul	eax, 7
+	add	[vidDebug.x], ax
+	cmp	[vidDebug.x], 1000
+	jb	.exit
+	mov	[vidDebug.x], 10
+	add	[vidDebug.y], 12
 
-	movdqu	xmm0, [rsp + 8]
-	movdqu	xmm1, [rsp + 16 + 8]
-	movdqu	xmm2, [rsp + 32 + 8]
-	movdqu	xmm3, [rsp + 48 + 8]
-	movdqu	xmm4, [rsp + 64 + 8]
-	movdqu	xmm5, [rsp + 80 + 8]
-	movdqu	xmm6, [rsp + 96 + 8]
-	movdqu	xmm7, [rsp + 112 + 8]
-	pop	rcx
-	mov	rsp, rcx
-	pop	rcx rbp rsi rdi rax rbx rdx
+.exit:
+
+
+	add	rsp, 32
+	pop	r15 rcx rbp rsi rdi rbx rdx
+
+	lea	rax, [rip]
+	shr	rax, 39
+	shl	rax, 39
+	btr	qword [rax + 8192 + functions], FN_REG64_
+	pop	rax
+
 	popfq
-	ret 8
-
+	ret
 
 ;============================================================================ for debugging ========
 reg64:

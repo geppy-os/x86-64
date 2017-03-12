@@ -5,7 +5,6 @@
 
 
 
-
 ;===================================================================================================
 ; input:  r8 - pointer to user data
 ;	      (+0 x, +2 y, +4 unsigned length, +6 font id, +8 color,
@@ -18,17 +17,37 @@
 
 
 	align 8
-g2d_drawText:
-	push	r15
-	sub	rsp, 24
+g2d_drawText2:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_G2D_DRAWTEXT2
 
+	push	r15
+	sub	rsp, 64
 	cld
+
+
+	; find out max height of one line and most right coordinate
+
+	mov	eax, [r9 + DRAWBUFF.clip.right]
+	sub	eax, 20
+	cmp	[r8], ax
+	ja	.exit
+
+	mov	eax, [r9 + DRAWBUFF.clip.bottom]
+	sub	eax, 20
+	cmp	[r8 + 2], ax
+	ja	.exit
+
+	reg2	rax, 0x100a
+
+
 
 	movzx	ecx, word [r8]		; x
 	movzx	eax, word [r8 + 2]	; y
-
-	mov	dword [rsp], ecx
-	movd	xmm1, eax
+	mov	[rsp], ecx
+	mov	[rsp + 16], eax
 
 	movzx	eax, word [r8 + 4]
 	mov	edx, [r8 + 8]
@@ -47,7 +66,6 @@ g2d_drawText:
 
 .no_clipping:
 
-
 	lea	r8, [font_7px]		; r8 = font_7px (ID gets converted to memory poiner)
 
 
@@ -58,7 +76,9 @@ g2d_drawText:
 	cmp	[r8], ax		; check max supported symbol id
 	mov	ebp, [r8 + 4]		; get offset for the SYMBOLS label
 	cmovbe	eax, ecx
-	movd	[rsp + 4], xmm1
+
+	mov	esi, [rsp + 16]
+	mov	[rsp + 4], esi
 
 	mov	esi, [r8 + 8 + rax*4]
 	movzx	eax, si 		; ax = width,height,starting y, spacers
@@ -68,14 +88,15 @@ g2d_drawText:
 	shr	eax, 12 		; starting y coordinate
 	and	ecx, 15 		; height
 	shr	r12d, 4 		; width
-	xorps	xmm0, xmm0
+	mov	dword [rsp + 20], 0
 	mov	dword [rsp + 8],  ecx
 	jz	.next_symbol
 
 	lea	ecx, [r12 + 1]
 	add	rsi, rbp
 	add	[rsp + 4], eax
-	movd	xmm0, ecx
+
+	mov	[rsp + 20], ecx
 	add	rsi, r8
 
 	mov	r15d, -64
@@ -105,7 +126,7 @@ g2d_drawText:
 	jmp	.next_pixel
 
 .next_symbol:
-	movd	eax, xmm0
+	mov	eax, [rsp + 20]
 	sub	dword [rsp + 12], 1
 	jz	.exit
 	add	dword [rsp], eax
@@ -115,8 +136,156 @@ g2d_drawText:
 
 .exit:
 
-	add	rsp, 24
+	add	rsp, 64
 	pop	r15
+
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_G2D_DRAWTEXT2
+	ret
+
+
+
+
+
+;===================================================================================================
+; input:  r8 - pointer to user data
+;	      (+0 x, +2 y, +4 unsigned length, +6 font id, +8 color,
+;		    +12 byte !=0 if fully transparent, +13 byte=0, +14 8byte text pointer)
+;	  r9 - pointer to destination DRABUFF struct
+;---------------------------------------------------------------------------------------------------
+; all input coordinates are signed 2byte values
+; DRAWBUFF clipping coordinates are assumed to be signed positive 4byte values, right>=left, bottom>=top
+;---------------------------------------------------------------------------------------------------
+
+
+	align 8
+g2d_drawText:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_G2D_DRAWTEXT
+
+	push	r15
+	sub	rsp, 64
+
+
+	mov	eax, [r9 + DRAWBUFF.clip.right]
+	sub	eax, 200
+	cmp	[r8], ax
+	ja	.exit
+
+	mov	eax, [r9 + DRAWBUFF.clip.bottom]
+	sub	eax, 200
+	cmp	[r8 + 2], ax
+	ja	.exit
+
+
+	cld
+
+	movzx	ecx, word [r8]		; x
+	movzx	eax, word [r8 + 2]	; y
+
+
+	mov	 [rsp], ecx
+	mov	[rsp + 16], eax
+
+	movzx	eax, word [r8 + 4]
+	mov	edx, [r8 + 8]
+	mov	r11d, [r8 + 12]
+	mov	r14, [r8 + 14]
+	mov	r13, [r9 + DRAWBUFF.ptr]
+	mov	r10d, [r9 + DRAWBUFF.bpl]
+	xor	ebx, ebx
+	xor	r11, r11
+	mov	[rsp + 12], eax
+
+
+
+;---------------------------------------------------------------------------------------------------
+; code bellow doesn't require per pixel coordinate clipping
+
+.no_clipping:
+
+
+	lea	r8, [font_7px]		; r8 = font_7px (ID gets converted to memory poiner)
+
+
+.draw_symbol:
+	movzx	eax, byte [r14]
+	mov	ecx, 3
+	add	r14d, 1
+	cmp	[r8], ax		; check max supported symbol id
+	mov	ebp, [r8 + 4]		; get offset for the SYMBOLS label
+	cmovbe	eax, ecx
+
+	mov	esi, [rsp + 16]
+	mov	[rsp + 4], esi
+
+	mov	esi, [r8 + 8 + rax*4]
+	movzx	eax, si 		; ax = width,height,starting y, spacers
+	shr	esi, 16 		; si = offset withing SYMBOLS section
+	movzx	ecx, al
+	movzx	r12d, al
+	shr	eax, 12 		; starting y coordinate
+	and	ecx, 15 		; height
+	shr	r12d, 4 		; width
+	mov	dword [rsp + 20], 0
+	mov	dword [rsp + 8],  ecx
+	jz	.next_symbol
+
+	lea	ecx, [r12 + 1]
+	add	rsi, rbp
+	add	[rsp + 4], eax
+
+	mov	[rsp + 20], ecx
+	add	rsi, r8
+
+	mov	r15d, -64
+@@:	lodsq
+	add	r15d, 64
+.next_pixel:
+	bsf	rcx, rax
+	jz	@b
+	btr	rax, rcx
+	xchg	rcx, rax
+	xor	edx, edx
+	add	eax, r15d
+	div	r12d			; return in edx:eax  x:y
+	cmp	dword [rsp + 8], eax
+	jbe	.next_symbol
+
+	add	eax, [rsp + 4]		; y++
+	add	edx, [rsp]		; x++
+	mov	ebp, eax
+	mov	edi, edx
+	imul	ebp, r10d
+	imul	edi, 4;3
+	add	rbp, r13
+	mov	rax, rcx
+	mov	word [rbp + rdi], 0 ;bx        ; draw pixel
+	mov	word [rbp + rdi + 2], 0;r11b
+	jmp	.next_pixel
+
+.next_symbol:
+	mov	eax, [rsp + 20]
+	sub	dword [rsp + 12], 1
+	jz	.exit
+	add	dword [rsp], eax
+	jmp	.draw_symbol
+
+
+
+.exit:
+
+	add	rsp, 64
+	pop	r15
+
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_G2D_DRAWTEXT
 	ret
 
 

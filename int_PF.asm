@@ -19,10 +19,8 @@ int_PF:
 	jz	k64err.pf_2nd_PF
 	mov	byte [sp_PF_2nd], 0x5a
 
-
 	mov	ecx, [sp_PF_pages]
 	mov	ebx, [sp_PF_pages + 4]
-
 
 	; All paging tables are always mapped
 	; They are never unmapped even if PT entries are not beeing used for a long time
@@ -36,6 +34,7 @@ int_PF:
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PDP address from PML4 entry
+	;reg	 rdi, 101f
 	mov	rsi, 0xffff'ffff'fffc'0000
 	rol	rbp, 9			   ; 1
 	xor	edi, 1				; invert Present flag
@@ -44,6 +43,7 @@ int_PF:
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PD address from PDP entry
+	;reg	 rdi, 101f
 	mov	rsi, 0xffff'ffff'f800'0000
 	rol	rbp, 9			   ; 2
 	xor	edi, 1
@@ -52,6 +52,7 @@ int_PF:
 
 	or	rsi, rbp
 	mov	rdi, [rsi*8]			; get PT address from PD entry
+	;reg	 rdi, 101f
 	mov	rsi, 0xffff'fff0'0000'0000
 	rol	rbp, 9			   ; 3
 	xor	edi, 1
@@ -84,9 +85,9 @@ int_PF:
 	mov	eax, [PF_ram + 4 + rax] 	; dirty/zeroed
 	ror	ecx, 16
 	cmp	edi, 0x3fc
-	ja	k64err
+	ja	k64err.pf1
 	test	edi, edi
-	jz	k64err
+	jz	k64err.pf2
 	mov	cx, di
 	mov	bx, ax
 	ror	ecx, 16
@@ -98,12 +99,13 @@ int_PF:
 	neg	rdi
 	lea	rax, [PF_ram + 4096 + rax]
 	mov	edi, [rax + rdi*4]		; EDI = 16kb index
+	;reg	 rdi, 69a
 
 	ror	ebx, 16
 	sub	cx, 1				; cached page size --
-	jc	k64err
+	jc	k64err.pf3
 	sub	bx, 1				; total size --
-	jc	k64err
+	jc	k64err.pf4
 	ror	ecx, 16
 	ror	ebx, 16
 	mov	[sp_PF_pages], ecx
@@ -112,6 +114,7 @@ int_PF:
 	shl	rdi, 14
 	or	rdi, 3
 	mov	[rsi*8], rdi
+	;reg	 rdi, 102f
 	add	rdi, 4096
 	mov	[rsi*8 + 8], rdi
 	add	rdi, 4096
@@ -148,7 +151,5 @@ int_PF:
 	add	rsp, 24
 	pop	rbx rdi rsi rcx rax r15 r8 rbp
 	iretq
-
-
 
 

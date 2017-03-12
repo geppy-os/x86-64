@@ -21,7 +21,7 @@ header:
 	dq 0
 	db imports-header
 	dd _start - dat
-	dw 0
+	dw udat_len
 	db 0
 	dw 0
 	dw imports_len
@@ -30,6 +30,8 @@ header:
 imports:
 	reg64'			dq LIB_SYS + (FUNC0_reg64 shl 32)
 	syscall_k		dq LIB_SYS + (FUNC0_syscall shl 32)
+	reboot			dq LIB_SYS + (FUNC0_reboot shl 32)
+	mouse_addData		dq LIB_SYS + (FUNC0_mouse_addData shl 32)
 
 imports_len = ($-imports)/8
 
@@ -39,6 +41,18 @@ dat:
     .var1 dd 0
 
     .job	dd 0
+
+
+ps2_mouseBytes:  dq 0
+packetCnt   dd 0
+maxPackets   dd 0
+ps2_mouseState	dd 0
+ps2_kbdState	dq 0
+ps2_mouseFlags	dq 0
+
+
+
+
 
 ;===================================================================================================
 ;///////////////////////       PS2 Mouse & Keyboard driver	 ///////////////////////////////////
@@ -60,6 +74,7 @@ _start:
 	call	[reg64']
 
 
+	mov	dword [packetCnt], -1
 
 	lea	r9, [ps2_kbd_handler]
 	xor	r12, r12
@@ -157,7 +172,7 @@ _start:
 
 
 
-	mov	r8d, 0xf6
+	mov	r8d, 0xf6			; set defaults
 	call	ps2_mouseSend
 
 
@@ -172,13 +187,11 @@ _start:
 	call	[reg64']
 	jmp	@b
 @@:
+	mov	dword [packetCnt], 0
+	mov	dword [maxPackets], 3
 
-
-
-
-	mov	r8d, 0xf4
+	mov	r8d, 0xf4			; enable
 	call	ps2_mouseSend
-
 
 	mov	r9d, 8
 @@:	sub	r9d, 1
@@ -191,6 +204,7 @@ _start:
 	call	[reg64']
 	jmp	@b
 @@:
+
 
 
 
@@ -216,10 +230,10 @@ ps2_kbd_handler:
 	push	0x21a rax
 	call	[reg64']
 
-;	 cmp	 al, 1
-;	 jnz	 @f
-;	 call	 reboot 	 ; reboot if Esc key pressed down
-;@@:
+	cmp	al, 1
+	jnz	@f
+	call	[reboot]	 ; reboot if Esc key pressed down
+@@:
 
 	pop	rax
 	mov	dword [qword lapic + LAPIC_EOI], 0
@@ -232,169 +246,77 @@ ps2_kbd_handler:
 
 	align 8
 ps2_mouse_handler:
-	push	rax
+	push	rax rcx rbx rsi rdi
+
 
 	in	al, 0x60
 
-	push	0x204 rax
-	call	[reg64']
+	mov	esi, [packetCnt]
+	mov	edi, [maxPackets]
+	lea	rcx, [ps2_mouseBytes]
+	cmp	esi, 0
+	jl	.mouse_init
+	jne	@f
+	test	eax, 1 shl 3			; first packet, bit3 must be 1
+	jz	.reinit_mouse
+@@:
+	add	dword [packetCnt], 1
+	mov	[rcx + rsi], al
+	cmp	dword [packetCnt], edi
+	jb	.exit
 
-	pop	rax
+	mov	eax, [ps2_mouseBytes]
+	movzx	ecx, al 			; flags 	  CX
+	movzx	esi, ah 			; x	       SI
+	shr	eax, 16 			; y	    AX
+	mov	edi, 0xff
+	bt	ecx, 6				; x overlow
+	cmovc	esi, edi
+	bt	ecx, 7				; y overflow
+	cmovc	eax, edi
+	ror	esi, 8
+	ror	eax, 8
+	bt	ecx, 4
+	cmovc	si, di
+	bt	ecx, 5
+	cmovc	ax, di
+	xor	ebx, ebx			; z	    BX
+	rol	esi, 8
+	rol	eax, 8
+
+	cmp	dword [packetCnt], 4
+	jb	.save_info
+
+	mov	bl, [ps2_mouseBytes + 3]
+
+.save_info:
+	mov	dword [packetCnt], 0
+	neg	ax
+
+	; "mouse_addData" can exit interrupt handler to do cursor redraw and do GUI events
+	; There are strict rules that ring0 interrupt handler must follow!
+
+	call	[mouse_addData]
+.exit:
+
+	pop	rdi rsi rbx rcx rax
 	mov	dword [qword lapic + LAPIC_EOI], 0
 	iretq
+
+
+;===================================================================================================
+.reinit_mouse:
+	mov	dword [packetCnt], -1
+	mov	dword [packetCnt], 0
+	jmp	.exit
+
+.mouse_init:
+	jmp	.exit
 
 .len = $-ps2_mouse_handler
 
 
 
-
-
-macro asd{
-
-
-	align 8
-ps2_mouse_handler3:
-	push	r15 rax rcx rbx rsi rdi rbp r8 r9
-
-	mov	r15, 0x400000
-	in	al, 0x60
-
-	mov	esi, [ps2_packetCnt]
-	cmp	esi, 0
-	jl	.mouse_init
-	jne	@f
-	test	eax, 1 shl 3			; first packet, bit3 must be 1
-	jz	.reinit_mouse
-@@:
-	add	dword [ps2_packetCnt], 1
-	mov	edi, [ps2_packetMax]
-	mov	[ps2_mouseBytes + rsi], al
-	cmp	dword [ps2_packetCnt], edi
-	jnz	.exit
-	;---------------------------------------
-
-	; TODO: use less PUSH/POP registers until we got here
-
-	mov	eax, [ps2_mouseBytes]
-	movzx	ecx, al 			; flags 	  CX
-	movzx	esi, ah 			; x	       SI
-	shr	eax, 16 			; y	    AX
-	mov	edi, 0xff
-	bt	ecx, 6				; x overlow
-	cmovc	esi, edi
-	bt	ecx, 7				; y overflow
-	cmovc	eax, edi
-	ror	esi, 8
-	ror	eax, 8
-	bt	ecx, 4
-	cmovc	si, di
-	bt	ecx, 5
-	cmovc	ax, di
-	xor	ebx, ebx			; z	    BX
-	rol	esi, 8
-	rol	eax, 8
-
-	cmp	dword [ps2_packetCnt], 4
-	jb	.save_info
-
-	mov	bl, [ps2_mouseBytes + 3]
-
-.save_info:
-	neg	ax
-	call	mouse_add_data
-
-	mov	dword [ps2_packetCnt], 0
-.exit:
-	;mov	 dword [qword lapic + LAPIC_EOI], 0
-	pop	r9 r8 rbp rdi rsi rbx rcx rax r15
-	ret
-;===================================================================================================
-
-.reinit_mouse:
-	reg	rax, 26f
-	mov	dword [ps2_packetCnt], -1
-	jmp	.exit
-
-.mouse_init:
-	reg	rax, 26f
-	jmp	.exit
-
-
-
-
-	align 8
-ps2_mouse_handler2:
-	push	r15 rax rcx rbx rsi rdi rbp r8 r9
-
-	mov	r15, 0x400000
-	in	al, 0x60
-
-	mov	esi, [ps2_packetCnt]
-	cmp	esi, 0
-	jl	.mouse_init
-	jne	@f
-	test	eax, 1 shl 3			; first packet, bit3 must be 1
-	jz	.reinit_mouse
-@@:
-	add	dword [ps2_packetCnt], 1
-	mov	edi, [ps2_packetMax]
-	mov	[ps2_mouseBytes + rsi], al
-	cmp	dword [ps2_packetCnt], edi
-	jnz	.exit
-	;---------------------------------------
-
-	; TODO: use less PUSH/POP registers until we got here
-
-	mov	eax, [ps2_mouseBytes]
-	movzx	ecx, al 			; flags 	  CX
-	movzx	esi, ah 			; x	       SI
-	shr	eax, 16 			; y	    AX
-	mov	edi, 0xff
-	bt	ecx, 6				; x overlow
-	cmovc	esi, edi
-	bt	ecx, 7				; y overflow
-	cmovc	eax, edi
-	ror	esi, 8
-	ror	eax, 8
-	bt	ecx, 4
-	cmovc	si, di
-	bt	ecx, 5
-	cmovc	ax, di
-	xor	ebx, ebx			; z	    BX
-	rol	esi, 8
-	rol	eax, 8
-
-	cmp	dword [ps2_packetCnt], 4
-	jb	.save_info
-
-	mov	bl, [ps2_mouseBytes + 3]
-
-.save_info:
-	neg	ax
-	call	mouse_add_data
-
-	mov	dword [ps2_packetCnt], 0
-.exit:
-	mov	dword [qword lapic + LAPIC_EOI], 0
-	pop	r9 r8 rbp rdi rsi rbx rcx rax r15
-	iretq
-
-	; kogda uspeli togda i uspeli s etimi oknami
-	; we have screen refresh every N milliseconds, so this is when we mess with the X and Y
-
-	; mouse bits are needed to increase cryptography strength, like in TrueCrypt
-
-;===================================================================================================
-
-.reinit_mouse:
-	reg	rax, 26f
-	mov	dword [ps2_packetCnt], -1
-	jmp	.exit
-
-.mouse_init:
-	reg	rax, 26f
-	jmp	.exit
-}
 
 ;===================================================================================================
 
@@ -434,4 +356,16 @@ ps2_mouseSend:
 	ret
 
 file_length = $-header
+
+;===================================================================================================
+;//////////////       uninitialized data = 0	   /////////////////////////////////////////////////
+;===================================================================================================
+
+	align 4096
+udat:
+	packets 	rb 8192
+
+udat_len = ((($-udat)+4095) shr 12)
+
+
 

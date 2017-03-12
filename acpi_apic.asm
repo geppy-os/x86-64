@@ -8,6 +8,11 @@
 ; we currently supports only one entry in this table
 
 acpi_parse_MCFG:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_ACPI_PARSE_MCFG
+
 
 	mov	r9d, [qword acpi_mcfg + rmData]
 	mov	r12d, [qword acpi_mcfg_len + rmData]
@@ -27,13 +32,13 @@ acpi_parse_MCFG:
 	add	r8, 0x2c
 .loop:
 	mov	rax, [r8]			; addr
-	reg	rax, 100a
+	;reg	 rax, 100a
 	movzx	eax, word [r8 + 8]		; ? matches ACPI "_SEG" if not 0
-	reg	rax, 40a
+	;reg	 rax, 40a
 	movzx	eax, byte [r8 + 10]		; starting pci bus
-	reg	rax, 20a
+	;reg	 rax, 20a
 	movzx	eax, byte [r8 + 11]		; ending pci bus
-	reg	rax, 20a
+	;reg	 rax, 20a
 
 	; commented bellow to force one entry
 	;add	 r8, 16
@@ -42,6 +47,15 @@ acpi_parse_MCFG:
 
 
 .exit:
+
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_ACPI_PARSE_MCFG
+	popf
+
 	ret
 
 
@@ -50,6 +64,11 @@ acpi_parse_MCFG:
 ;===================================================================================================
 
 acpi_parse_FADT:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_ACPI_PARSE_FADT
+
 
 	mov	r9d, [qword acpi_facp + rmData]
 	mov	r12d, [qword acpi_facp_len + rmData]
@@ -102,7 +121,16 @@ acpi_parse_FADT:
 
 
 	clc
-.exit:	ret
+.exit:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_ACPI_PARSE_FADT
+	popf
+
+	ret
+
 .err:	stc
 	jmp	.exit
 
@@ -117,8 +145,14 @@ acpi_parse_FADT:
 ;---------------------------------------------------------------------------------------------------
 
 acpi_parse_MADT:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_ACPI_PARSE_MADT
 
-	mov	rax, 0x10'00000/16384
+			    ; mov rax, [qword 0x24'00000]
+
+	mov	rax, 0x24'00000/16384
 	mov	r8, rax
 	shl	rax, 14
 	mov	r9d, 0x200000/16384
@@ -514,7 +548,15 @@ macro sad{
 }
 ;----------------
 
-.exit:	clc
+.exit:
+	clc
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_ACPI_PARSE_MADT
+	popf
+
 	ret
 
 

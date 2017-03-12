@@ -26,10 +26,10 @@ define LAPIC_DFR	0x00e0
 define LAPIC_SVR	0x00f0
 
 define RTC_vector	0xf1		; entry index in IDT
-define LAPICT_vector	0x20		; entry index in IDT
-
-define LAPICT		0x0320
-define LAPICT_INIT	0x0380
+define LAPICT_vector	0x20		; entry index in IDT; really, better be <= 0x2f
+					; we use CR8 to disable lapic timer only (all IRQs bellow 0x2f)
+define LAPICT		0x0320		;	       cpu exceptions are not disabled with cr8
+define LAPICT_INIT	0x0380		;	       CR8 read/write is not a serializing instruction
 define LAPICT_CURRENT	0x0390
 define LAPICT_DIV	0x03e0
 define LAPIC_MSR	0x1b		; IA32_APIC_BASE
@@ -99,6 +99,38 @@ define FUNC0_u			3
 define FUNC0_timer_in		4
 define FUNC0_timer_exit 	5
 define FUNC0_syscall		6
+
+define FN_ACPI_PARSE_MCFG	0
+define FN_ACPI_PARSE_MADT	1
+define FN_ACPI_PARSE_FADT	2
+define FN_ALLOC_LIN_ADDR	3
+define FN_ALLOC_4KB_RAM 	4
+define FN_REFILL_PAGING_RAM	5
+define FN_UPDATE_PF_RAM 	6
+define FN_THREAD_FROM_FILE	7
+define FN_THREAD_CREATE_SYS	8
+define FN_THREAD_SLEEP		9
+define FN_TIMER_IN		10
+define FN_G2D_INIT_SCREEN	11
+define FN_G2D_FLUSH		12
+define FN_G2D_DRAWCURSOR	13
+define FN_PCI_FIGUREMMIO	14
+define FN_PCI_GETBARS		15
+define FN_FRAGMENT_RAM		16
+define FN_MEM4KB_ZERO		17
+define FN_MAPTOKNOWNPT		18
+define FN_SYSFILE_BUILDINDRV	19
+define FN_SYSFILE_PARSE 	20
+define FN_INT_INSTALL		21
+define FN_IDT_SET_IRQ		22
+define FN_MOUSE_ADD_DATA	23
+define FN_G2D_DRAWTEXT		24
+define FN_REG64_		25
+define FN_G2D_DRAWTEXT2 	26
+define FN_G2D_FILLRECT		27
+
+
+
 
 struct RECT
   left		dd ?

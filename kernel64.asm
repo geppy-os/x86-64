@@ -144,18 +144,41 @@ LMode:
 
 ;===================================================================================================
 
+	pushq	0x2000				; min 128MB in 16KB units
+
+	movzx	esi, byte [qword vidModes_sel + rmData]
+	cmp	esi, 0xff
+	jz	@f
+
+	; graphics makes use of alot of RAM, account for that
+	mov	r8d, vidModes + rmData
+	imul	esi, sizeof.VBE
+	movzx	edi, [r8 + rsi + VBE.width]
+	movzx	eax, [r8 + rsi + VBE.height]
+	movzx	ecx, [r8 + rsi + VBE.bytesPerPx]
+	add	edi, 3
+	and	edi, not 3			; multiple of 4px width
+	imul	edi, eax			; * height
+	imul	edi, ecx			; * bytes per pixel
+	add	edi, 16383			; multiple of 16KB
+	shr	edi, 14
+	shl	edi, 1				; 2 buffers
+	add	[rsp], rdi
+
 @@:	; need some minimum memory fragmented
 	call	fragmentRAM
-	jc	k64err				; not enough memory
-	cmp	dword [qword memTotal], 0x2000	; need min 128MB (min 3 function calls is required)
+	jc	k64err.noRAM
+	mov	eax, [rsp]			; 128MB + whatever 2 screen buffers need
+	cmp	[qword memTotal], eax
 	jb	@b
+	add	rsp, 8
 
 @@:	; need to supply some minimum memory for #PF handler
 	call	update_PF_ram
 	cmp	word [PF_pages + 6], 0x1800	; min 96MB for #PF, one call gets us max 15.9MB
 	jb	@b
 
-	; and we need some min mem to use for paging structures
+	; and we need some min mem to use for paging structures (RAM taken from #PF if available)
 	call	refill_pagingRam
 
 ;===================================================================================================
@@ -271,63 +294,15 @@ LMode:
 	call	sysFile_buildInDrv		; parse drivers that were compiled & loaded with kernel
 
 
-
-
+	mov	rax, [qword 0x2600000-8]
 
 
 
 
 
 ;===================================================================================================
-
-
-
-	mov	rax, [lapicT_ms]
-	reg	rax, 104f
-	mov	rax, [lapicT_us]
-	reg	rax, 104f
-	;mov	 rax, [PF_pages]
-	;reg	 rax, 104f
-	mov	eax, [qword memTotal]
-	reg	rax, 84f
-
-
 	cmp	dword [qword vbeLfb_ptr + rmData], 0
 	jz	.55
-
-	;call	 mouse_draw
-
-	; need screen rotation
-	; need 16,24,32 bits support, to copy to lfb
-
-
-	movzx	esi, byte [qword vidModes_sel + rmData]
-	imul	esi, sizeof.VBE
-	movzx	ecx, [vidModes + rmData + esi + VBE.bps]
-	movzx	eax, [vidModes + rmData + esi + VBE.bytesPerPx]
-
-
-	mov	r8d, [qword vbeLfb_ptr + rmData]
-	mov	r9, 768
-@@:	;mov	 dword [r8], 0xff0000
-	add	r8, 4
-	add	r8, rcx
-	sub	r9, 1
-	jnz	@b
-
-	mov	r8d, [qword vbeLfb_ptr + rmData]
-	mov	r9, 1024
-.3:	;mov	 dword [r8], 0xff00
-	add	r8, 4
-	test	r8, 7
-	jnz	@f
-	add	r8, rcx
-@@:
-	sub	r9, 1
-	jnz	.3
-
-
-
 
 	sub	rsp, 16
 	mov	r9, vidBuff
@@ -337,7 +312,7 @@ LMode:
 	mov	dword [r8], 0
 	mov	word  [r8 + 4], ax
 	mov	word  [r8 + 6], cx
-	mov	dword [r8 + 8], 0xffffff
+	mov	dword [r8 + 8], 0xf0f0f0
 	mov	word  [r8 + 12], 0
 	call	g2d_fillRect
 	add	rsp, 16
@@ -370,22 +345,7 @@ LMode:
 	add	rsp, 16
 
 
-	sub	rsp, 32
-	mov	r8, rsp
-	lea	rax, [text1]
-	mov	word  [r8], 10
-	mov	word  [r8 + 2], 40
-	mov	word  [r8 + 4], text1Len
-	mov	word  [r8 + 6], 0 ;font id
-	mov	dword [r8 + 8], 0xff ;color
-	mov	word  [r8 + 12], 0
-	mov	qword [r8 + 14], rax ;text ptr
-	mov	r9, vidBuff
-	call	txtOut_noClip
-	add	rsp, 32
-
-
-	sub	rsp, 128
+	sub	rsp, 16
 	mov	r8, rsp
 	mov	word [r8], 5
 	mov	word [r8 + 2], 5
@@ -395,25 +355,20 @@ LMode:
 	mov	word [r8 + 12], 0
 	mov	r9, vidBuff
 	call	g2d_fillRect
-	add	rsp, 128
-
-
-	; TODO: need to fix PS2 polarity/trigger
-	;	remove junk code
+	add	rsp, 16
 
 
 	call	g2d_flush
 
+	call	g2d_drawCursor
 
-
+	reg2	0xc3921, 0x404
 
 .55:
 
 	or	dword [sysTasks], 1
 
-
 	jmp	OS_LOOP
-
 
 
 
@@ -429,27 +384,6 @@ addr1 = ($-LMode)+0x200000
 
 	add	byte [qword 160*24+txtVidMem + 32], 1	     ; 1st green square at the bottom
 
-
-
-
-    ;  jmp OS_LOOP_over
-    ;
-
-
-
-	test	dword [sysTasks], 1
-	jnz	devMngr
-	jmp	OS_LOOP_over
-
-
-
-devMngr:
-
-
-
-
-	btr	dword [sysTasks], 0
-	jmp	OS_LOOP_over
 
 
 

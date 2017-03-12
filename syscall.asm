@@ -27,7 +27,7 @@ syscall_threadSleep:
 	xchg	r8, r9
 	jmp	thread_sleep
 
-
+;
 ;===================================================================================================
 ;////////////  SYSCALL handler (replacement if SYSCALL instruction unavailable)  ///////////////////
 ;===================================================================================================
@@ -62,7 +62,7 @@ syscall_k:
 
 	mov	r15, 0x400000
 
-	shr	rcx, 39 			; rcx = kernel cpu id
+	shr	rcx, 39 			; rcx = thread id
 	shl	rcx, 39
 	mov	[rcx + 32768-8], rsp
 	mov	[rcx + 32768-16], rsi
@@ -74,9 +74,6 @@ syscall_k:
 	mov	[rcx + 32768-64], rdx		; rip
 
 	lea	rsp, [rcx + 32768-128]		; expect around 12KB of stack here
-
-   reg 0, 100e
-   reg r10, 20e
 
 	;----------------------------------------
 	lea	rdi, [sys_calls]

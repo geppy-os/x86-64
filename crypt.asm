@@ -2,6 +2,13 @@
 ; Distributed under GPLv1 License  ( www.gnu.org/licenses/old-licenses/gpl-1.0.html )
 ; All Rights Reserved.
 
+
+;get 2ybes, and for each bit: bit set - run one hash algo, bit cleared - run another hash algo
+; hash is run on separate set of bytes
+
+; If user not moving mouse then use TSC - next best thing low bits of a fast timer
+
+
 ;===================================================================================================
 ;     rand_tsc	   /////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================

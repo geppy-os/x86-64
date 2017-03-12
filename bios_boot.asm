@@ -16,6 +16,7 @@ bios_boot:
 	mov	gs, cx
 	mov	[gs:boot_disk], dl
 	sti
+	;reg	 edx
 
 	; get max PCI bus
 	mov	eax, 0xb101
@@ -28,6 +29,7 @@ bios_boot:
 	jnz	k16err
 	sti
 	mov	[gs:max_pci_bus], cl
+	;reg	 ecx
 
 
 	push	gs
@@ -38,6 +40,10 @@ bios_boot:
 	rep	stosd
 
 	mov	word [gs:txtVidCursor], 160
+
+	; TODO: don't forget checksum and redesign starting "org"
+
+	; need save/restore configuration (for rotated sceen as I am used to)
 
 	; get EBDA mem
 	clc
@@ -88,6 +94,16 @@ bios_boot:
 	cmp	ecx, 254
 	ja	.e820
 	mov	[di + 7], cl		; change locaion of mem type
+
+	;mov	 ebp, [di + 4]
+	;reg	 ebp
+	;sub	 [cs:reg16.cursor],2
+	;reg	 eax
+	;mov	 ecx, [di + 12]
+	;reg	 ecx
+	;sub	 [cs:reg16.cursor],2
+	;reg	 edx
+	;add	 [cs:reg16.cursor],2
 
 	add	byte [memMap_cnt], 1
 	add	di, 16
@@ -383,7 +399,8 @@ bios_boot:
 ;---------------------------------------------------------------------------------------------------
 .vbeModes_done:
 	mov	byte [vidModes_sel], -1
-	jmp	.vid_setTextMode
+	;jmp	 .vid_setTextMode
+	mov	byte [vidModes_sel], 23
 	;jmp	 .vid_setMode
 
 	push	gs
@@ -549,6 +566,26 @@ bios_boot:
 	;int	 0x10
 	sti
 @@:
+
+;	 mov	 al,10001b		 ; begin PIC 1 initialization
+;	 out	 0x20, al
+;	 mov	 al,10001b		 ; begin PIC 2 initialization
+;	 out	 0xa0, al
+;
+;	 mov	 al, 80h		 ; IRQ 0-7: interrupts 80h-87h
+;	 out	 21h, al
+;	 mov	 al, 88h		 ; IRQ 8-15: interrupts 88h-8Fh
+;	 out	 0A1h, al
+;
+;	 mov	 al, 100b		 ; slave connected to IRQ2
+;	 out	 0x21, al
+;	 mov	 al, 2
+;	 out	 0xA1, al
+;
+;	 mov	 al, 1			 ;EOI
+;	 out	 0x21, al
+;	 out	 0xA1, al
+
 
 ;===================================================================================================
 .enter_pmode:

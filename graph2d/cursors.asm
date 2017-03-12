@@ -3,16 +3,26 @@
 ; All Rights Reserved.
 
 
+
+
+
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
 ;input:  r8  - pointer to mouse data
-;	       (cursor data/image must already properly match the screen)
+;	       (cursor image must already properly match the screen)
 ;	 r9  - pointer to screen DRAWBUFF struct where to draw (24 or 32 bit)
 ;	 r12 - pointer to doubleBuffer DRAWBUFF struct from where to restore (24bit only)
 
 	align 8
 g2d_drawCursor:
+	push	r15 rbp r8 r9 r10 r11 r12 r13 r14 rdx
+
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_G2D_DRAWCURSOR
+
 	sub	rsp, 64
 
 
@@ -148,8 +158,8 @@ g2d_drawCursor:
 	mov	r14d, [r12 + DRAWBUFF.bpl]	; bytes per line    r14 - eax - ecx		R14
 	mov	esi, r13d
 	mov	eax, r14d
-	movzx	edi, word [_x]			;		    edi - ebp
-	movzx	ecx, word [_y]			;		    ecx - edx
+	movzx	edi, word [_x2] 		;		    edi - ebp
+	movzx	ecx, word [_y2] 		;		    ecx - edx
 	mov	ebp, [r9 + DRAWBUFF.bpp]	; bytes per pixel
 	mov	edx, [r9 + DRAWBUFF.bpl]	; bytes per line				EDX
 	imul	esi, edi			; doubleBuff bpp * x
@@ -276,5 +286,13 @@ g2d_drawCursor:
 
 
 .exit:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_G2D_DRAWCURSOR
+	popf
+
 	add	rsp, 64
+	pop	rdx r14 r13 r12 r11 r10 r9 r8 rbp r15
 	ret

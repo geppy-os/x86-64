@@ -19,6 +19,9 @@ txtOut_noClip:
 	push	r15
 	sub	rsp, 24
 
+	mov	r9, screen
+
+
 	cld
 
 	movzx	ecx, word [r8]		; x

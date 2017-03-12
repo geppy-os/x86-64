@@ -15,9 +15,6 @@
 ; most constants and structs are in "const.inc"
 
 
-; TODO: key press events need to go to the buffer so that user app can process then all at once in a single event handler
-;	make (or not) all threads run for 4ms without any interruption ?
-
 
 	format binary as 'img'
 	org 0x8000
@@ -66,13 +63,13 @@ macro reg val, flags{
 	pop	rax
 	popfq
 }
-macro reg2 val{
+macro reg2 val, flags1{
 	pushfq
-	push	rax
-	mov	rax, qword val
-	push	rax
-	call	reg64_2
-	pop	rax
+	push	r8 r9
+	mov	r8, val
+	mov	r9, flags1
+	call	reg64_
+	pop	r9 r8
 	popfq
 }
 macro ascii val, flags{
@@ -214,7 +211,7 @@ devInfo_sz	= 32
 ;		[6]   =1 if driver not found on disk
 ;		[7]   =1 if driver assigned
 ;------------------------
-; bytes 10,11 & 12,13: how can we connect this bus input/pin (later on device) to IOAPIC
+; bytes 10,11 & 12,13: how can we connect this bus input/pin (later - device) to IOAPIC
 ;------------------------
 ; +10  1byte:
 ;	  ioapic kernel id	 [1:0]
@@ -257,6 +254,13 @@ devInfo_sz	= 32
 ; First 16 entries always considered taken and never freed. They ALSO represent 16 ISA bus inputs/pins.
 ; If more than 1 device on ISA input then we add more entries.
 ;----------------------------------------------
+;????
+; either user or dev driver or some table in memory needs to tell if anything connected to an ISA input
+; if connected we look in first 16 entries device pol+trig+other_info and create new ISA entry
+; not within first 16 entries ( source bus irq is irrelevent in this case )
+; we can also reserve 4entries for PCI A/B/C/D to know how they connected
+; first we parsed 16 ISA inputs then we parse 4 PCI ABCD and then we use all of that to add dev entries
+;---------------------------------------------
 
 kernelEnd_addr	= data1 + 4088	; address were we can copy more ring0 code, grows over time
 inst_devs_cnt	= data1 + 4092
@@ -289,6 +293,7 @@ idt		equ	r15
 
 lapicT_stack	equ	r15+(4096+512)
 
+lapicT_redraw	equ	r15+((4096+512)-144)	; 1b
 lapicT_sysTID	equ	r15+((4096+512)-146)	; 2b, system thread id = always ring0 thread
 lapicT_overhead equ	r15+((4096+512)-150)	; 4b, time it takes to execute the handler
 lapicT_currTID	equ	r15+((4096+512)-152)	; ID of the thread that is running right now
@@ -324,7 +329,7 @@ lapicT_r15	equ	r15+((4096+512)-192)	; 6bytes, value of R15 in 64KB units
 
 
 ; var access from within the interrupt handler without using r15 register
-sp_lapicT_overhead equ	   rsp+46
+;sp_lapicT_overhead equ     rsp+46
 sp_lapicT_overhead equ	   rsp+42
 sp_lapicT_currTID  equ	   rsp+40
 ;sp_lapicT_kPML4    equ     rsp+32
@@ -379,7 +384,7 @@ DF_stack	equ	r15+(4096+2048)
 
 HPET1_stack	equ	r15+(4096+2560)
 
-interrupt_stack equ	r15+(4096+3584)
+interrupt_stack equ	r15+(4096+3584) 	; 1 KB, enough?
 
 ;---------------------------------------------------------------------------------------------------
 
@@ -425,11 +430,16 @@ _z		equ	r15+(12*1024+420)
 _btns		equ	r15+(12*1024+422)
 _xPrev		equ	r15+(12*1024+424)
 _yPrev		equ	r15+(12*1024+426)
+_x2		equ	r15+(12*1024+428)
+_y2		equ	r15+(12*1024+430)
 
 
 tscGranul	equ	r15+(12*1024+432)	; 16bytes total
 lapicID 	equ	r15+(12*1024+448)	; 1b
-
+lock1		equ	r15+(12*1024+449)	; 2b
+?		equ	r15+(12*1024+451)
+redrawFrame	equ	r15+(12*1024+456)	; 8b, in lapicT_time units
+redrawTime	equ	r15+(12*1024+464)	; 8b
 
 
 
@@ -453,14 +463,8 @@ _?		equ	r15+((76*1024)+768)
 ;=========================================================================  thread control block ===
 ; following offsets are relative to "user_data_rw"
 ;---------------------------------------------------------------------------------------------------
-event_mask	equ	0			; 8byte
-sysc_rax	equ	8
-sysc_r14	equ	16
-sysc_rsi	equ	24
-sysc_rdi	equ	32
-sysc_uStack	equ	40
-sysc_uRIP	equ	48
-sysc_uFlags	equ	56
+event_mask	=	0			; 8byte
+functions	=	16
 
 ;==========================================================================  kernel only data  =====
 
@@ -486,7 +490,8 @@ sysc_uFlags	equ	56
 	include "syscall.asm"
 
 	include 'graph2d/graph2d.asm'		; 2D graphics, contains many "include"s
-	include 'gui/gui.asm'			; Graphical User Interface, contains many "include"s
+	include 'gui.asm'
+	include 'mouse.asm'
 	include 'debug/g2d_drawText.asm'
 
 	; device drivers (best not to include printers, mouses or smth not vital)
@@ -567,6 +572,8 @@ kExports_func:
     dd timer_in - LMode 		; ptr ok
     dd timer_exit - LMode		; ptr ok
     dd syscall_k - LMode		; ptr ok
+    dd reboot - LMode
+    dd mouse_add_data - LMode
 @@:
 ;    dw 0
 ;    dw 0
@@ -578,11 +585,13 @@ kExports_func:
 ;@@:
 
 ;------------------------------------------------
-	align 8
+	align 4
 sys_calls:
     dd timer_in - LMode
     dd syscall_threadSleep - LMode
     dd syscall_intInstal - LMode
+    dd reboot  - LMode
+
 
     .max = ($-4-sys_calls)/4
 
@@ -604,6 +613,15 @@ text_directions:
 	include 'graph2d/cursors.inc'
 	include 'k64err_messages.inc'
 
+
+vidDebug:	.x		dw 10	; +0 x
+		.y		dw 200	; +2
+		.len		dw 0	; +4
+		.font		dw 0
+		.clr		dd 0
+				dw 0
+		.ptr		dq 0	; +14
+		.line		dw 0
 
 _lmode_ends:
 

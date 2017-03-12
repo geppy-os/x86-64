@@ -60,38 +60,38 @@ toAsciiDec8:
 	ret	16
 
 ;===================================================================================================
-
-
 ; input:  r8 - number
 ;	  r9 - mem ptr where to save
 ;	  r12b - how many 4bit digits to process starting with lowest bit in the r8 register
 
 	align 8
 regToAsciiHex:
+	pushf
+	push	r13 r14 rax rdi rcx
 	mov	r13, '01234567'
 	mov	r14, '89abcdef'
-	push	rax rdi rcx r14 r13
-	cld
-	mov	rdi, r9
+	push	r14 r13
 
-	movzx	ecx, r12b
-	shl	ecx, 2
-	sub	ecx, 4
-	jb	.exit
-	ror	r8, cl
+	and	r12, 0xff
+	cmp	r12b, 16
+	jb	@f
+	mov	r12d, 16
 @@:
+	lea	rdi, [r9 + r12 - 1]
+	std
+@@:
+	sub	r12d, 1
+	jc	.exit
 	mov	eax, r8d
 	and	eax, 15
 	movzx	eax, byte [rsp + rax]
-	rol	r8, 4
+	shr	r8, 4
 	stosb
-	sub	r12d, 1
-	jnz	@b
+	jmp	@b
 .exit:
-	mov	rcx, [rsp + 16]
-	mov	rdi, [rsp + 24]
-	mov	rax, [rsp + 32]
-	add	rsp, 40
+	add	rsp, 16
+	pop	rcx rdi rax r14 r13
+	popf
 	ret
 
 ;===================================================================================================

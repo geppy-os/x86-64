@@ -46,6 +46,10 @@ drv_find:
 int_install:
 	push	rax rcx rdi rsi rdx rbx rbp r12
 
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_INT_INSTALL
 
 	mov	esi, r8d
 	and	esi, 0x7fff
@@ -104,7 +108,7 @@ int_install:
 	test	 dword [r13 + 8], 1		; can dev driver distinguish betw its irq and other devs?
 	jnz	 .nonSharedInt			; jump if no
 
-; need to check polarity & trigger for the shared
+
 
 	jmp	.done
 
@@ -194,7 +198,15 @@ int_install:
 	mov	dword [rcx + 16], edi
 
 ;---------------------------------------------------------------------------------------------------
-.done:	pop	r12 rbp rbx rdx rsi rdi rcx rax
+.done:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_INT_INSTALL
+	popf
+
+	pop	r12 rbp rbx rdx rsi rdi rcx rax
 	ret
 
 
@@ -202,19 +214,8 @@ int_install:
 
 
 
+    macro asd{
 
-
-
-
-
-
-
-
-
-
-
-
-macro asd{
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
 ;===================================================================================================
@@ -388,7 +389,7 @@ int_install__:
 .err:
 	stc
 	jmp	.exit
-	}
+}
 
 ;===================================================================================================
 ;///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -401,6 +402,11 @@ int_install__:
 	align 8
 idt_setIrq:
 	push	rbx rcx r8 rax rdx
+
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_IDT_SET_IRQ
 
 	lea	rbx, [idt]
 	mov	eax, r8d
@@ -423,6 +429,11 @@ idt_setIrq:
 
 	cmpxchg16b [r9 + r8]
 	jnz	k64err
+
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_IDT_SET_IRQ
 
 	pop	rdx rax r8 rcx rbx
 	ret

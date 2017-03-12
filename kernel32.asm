@@ -17,6 +17,20 @@ PMode:
 
 ;===================================================================================================
 
+					 ;  UC	 UC-  WT   WB
+	mov	eax, 1			 ; 000	 111  100  110
+	cpuid		; 1fcbfbff	    00	 07   04  06
+	bt	edx, 16
+	setc	byte [feature_PAT]	; tested on Intel CPU only
+
+	mov	eax, 0x80000000
+	cpuid
+	cmp	eax, 0x80000008
+	jb	k32err.no_longMode
+
+
+;===================================================================================================
+
 	mov	eax, cr0
 	;		   CD		 NW	 AM(align off)	EM(run MMX)
 	and	eax, not((1 shl 30) + (1 shl 29) + (1 shl 18) + (1 shl 2))
@@ -79,6 +93,8 @@ PMode:
 @@:	test	eax, eax
 	jnz	.find_RSDP
 
+	;reg	 ecx, 874
+	;reg	 ebx, 874
 	mov	[acpi_rsdt + rmData], ecx
 	mov	[acpi_rsdt_len + rmData], ebx
 
@@ -133,6 +149,8 @@ PMode:
 	cmp	ecx, 64
 	jb	.MP_found
 
+	;reg	 ebx, 875h
+	;reg	 ecx, 475h
 	mov	[mp_table + rmData], ebx
 	mov	[mp_table_len + rmData], ecx
 .MP_found:
@@ -160,6 +178,7 @@ PMode:
 	cmp	edx, 36
 	jb	.ACPI_enumerate
 
+	;reg	 eax, 874
 	cmp	eax, 'SSDT'
 	jz	.acpi_ssdt
 	cmp	eax, 'APIC'

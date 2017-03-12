@@ -35,13 +35,28 @@ use following options inside fdisk: o - create dos partition table
 Make sure kernel is not using "old partition table" (you may get a warning) and continue:
 You may need to run "sudo fdisk -l" again. I'll be using /dev/sde
 
-You need min 4GB flash drvie for >> modern << utitlities to apply FAT32 correctly
+You need min 4GB flash drvie for >>modern<< utitlities to apply FAT32 correctly
+
 
 sudo mkfs.fat /dev/sde1 -F 32
+
+comment 2
+
 sudo umount /dev/sde1
+
+comment 3
+
 sudo dd if=geppy/boot/mbr.bin of=/dev/sde conv=fdatasync
+
+comment 4
+
 sudo dd if=geppy/boot/jump.bin of=/dev/sde1 conv=fdatasync
+
+comment 5
+
 sudo dd if=geppy/boot/vbr_fat32.bin of=/dev/sde1 obs=1c seek=90 conv=fdatasync
+
+replug your drive/disk and copy geppy.img
 
 # License
 

@@ -9,11 +9,6 @@
 ; !! LAPIC Timer is triggered because we need something new to run, not because something expired !!
 
 
-; NEED 8byte "lapicT_time" var, using only 4byte now
-
-; some syscalls like "thread_sleep" can wait for result before returning to user, is it sleep state?
-; better not to have postponed syscalls like "thread_sleep"
-; but wat if we do?
 
 	align 4
 int_lapicTimer:
@@ -26,7 +21,7 @@ int_lapicTimer:
 	mov	eax, [sp_lapicT_flags]
 
 	cmp	dword [qword lapic + LAPICT_INIT], 0xffff'fff0
-	ja	k64err
+	ja	k64err.lapT_largeInit
 
 	; check if noThreadSw was called prior to entering this handler
 	test	eax, 1 shl 2				; 4
@@ -46,6 +41,7 @@ int_lapicTimer:
 @@:
 	mov	r13d, [qword lapic + LAPICT_INIT]	; INIT can be 0 			  R13
 	sub	r13d, [qword lapic + LAPICT_CURRENT]	; if thread prematurely goes to sleep
+
 	or	dword [qword lapic + LAPICT], 1 shl 16
 	mov	dword [qword lapic + LAPICT_INIT], -1	; how long it takes to execute this handler ?
 
@@ -93,6 +89,7 @@ int_lapicTimer:
 	xor	ecx, ecx
 	add	[lapicT_time], r13			; bring time up to date
 	setc	cl
+	or	[lapicT_redraw], cl
 	shl	ecx, 1
 	xor	dword [lapicT_flags], ecx		; time overflow = change of current timer_list id
 	xor	r11, r11				; =0 if priority thread (no custom RIP addr)
@@ -127,6 +124,7 @@ int_lapicTimer:
 	imul	r8d, sizeof.TIMER
 	mov	rax, [lapicT_time]
 	mov	rbx, [rsi + r8 + TIMER.wakeUpAt]	; rbx = time of next timer trigered thread
+
 	btr	dword [lapicT_flags], 0
 	cmp	rbx, rax
 	ja	.process_priority_list			; JUMP if closest timer time doesn't match
@@ -177,6 +175,7 @@ int_lapicTimer:
 	mov	r10d, r9d
 	imul	r9, sizeof.THREAD
 	movzx	ebp, [r8 + r9 + THREAD.flags]		; get priority list ID, low 2 bits
+
 	and	ebp, 1000'0011b
 	btr	ebp, 7
 	jnc	k64err.lapT_noThreadSleep		; jump if thread not sleeping
@@ -334,7 +333,6 @@ int_lapicTimer:
 
 ;===================================================================================================
 .exit:
-
 	cmp	r10, 0
 	jle	k64err.lapT_manyTicks
 	cmp	r10d, 0xffff'fff0
@@ -457,6 +455,7 @@ int_lapicTimer:
 
 	or	dword [rbx + 8192 + event_mask], 1	; this mem location belongs to the thread
 @@:							;	  but user thread can't modify it
+
 	mov	rbx, [rax + 512 + 24]
 	mov	rbp, [rax + 512 + 32]
 	mov	rax, [rax + 512 + 96]

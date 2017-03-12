@@ -19,12 +19,11 @@
 
 pci_figureMMIO:
 
-;	 mov	 esi, [qword acpi_mcfg + rmData]
-;	 mov	 ebp, [qword acpi_mcfg_len + rmData]
-;	 test	 esi, esi
-;	 jz	 .done
-;	 test	 ebp, ebp
-;	 jz	 .done
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_PCI_FIGUREMMIO
+
 
 	movzx	r8d, byte [qword max_pci_bus + rmData]
 
@@ -104,6 +103,12 @@ macro asd{
 	jnz	@b
 }
 
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_PCI_FIGUREMMIO
+	popf
 	ret
 
 ;===================================================================================================
@@ -113,11 +118,14 @@ macro asd{
 ; and maybe determine if mmio supported here
 
 pci_getBARs:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_PCI_GETBARS
+
 
 
 	mov	r8, pciDevs + rmData - 16
-	mov	ebp, [qword pciDevs_cnt + rmData]
-	;reg	 rbp, 80a
 
 	align 8
 .next_dev:
@@ -137,6 +145,13 @@ pci_getBARs:
 
 ;---------------------------------------------------------------------------------------------------
 .exit:
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_PCI_GETBARS
+	popf
 	ret
 
 

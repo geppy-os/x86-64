@@ -22,6 +22,11 @@ sysFile_load:
 
 	align 4
 sysFile_buildInDrv:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_SYSFILE_BUILDINDRV
+
 	sub	rsp, 256
 
 	mov	rsi, [qword devInfo]
@@ -64,6 +69,13 @@ sysFile_buildInDrv:
 	jmp	.loop
 .exit:
 	add	rsp, 256
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_SYSFILE_BUILDINDRV
+	popf
 	ret
 
 ;===================================================================================================
@@ -79,6 +91,11 @@ sysFile_buildInDrv:
 
 	align 4
 sysFile_parse:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_SYSFILE_PARSE
+
 	push	rax rcx rdi rsi rbp rbx
 	cld
 
@@ -215,7 +232,15 @@ sysFile_parse:
 
 
 .ok:	clc
-.exit:	pop	rbx rbp rsi rdi rcx rax
+.exit:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_SYSFILE_PARSE
+	popf
+
+	pop	rbx rbp rsi rdi rcx rax
 	ret
 .err:	stc
 	jmp	.exit

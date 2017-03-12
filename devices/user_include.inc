@@ -17,7 +17,11 @@ define FUNC0_u			3
 define FUNC0_timer_in		4
 define FUNC0_timer_exit 	5
 define FUNC0_syscall		6
+define FUNC0_reboot		7
+define FUNC0_mouse_addData	8
 
 define sys_timerIn		0
 define sys_sleep		1
 define sys_intInstall		2
+define sys_reboot		3
+define sys_mouseAddData 	4

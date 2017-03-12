@@ -40,8 +40,11 @@ drawText:
 ; when mouse is
 
 g2d_flush:
-	cmp	dword [qword vbeLfb_ptr + rmData], 0
-	jz	.exit
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_G2D_FLUSH
+
 	cmp	qword [qword vidBuff + DRAWBUFF.ptr], 0
 	jz	.exit
 
@@ -49,11 +52,18 @@ g2d_flush:
 	mov	[r8 + RECT.left], 0
 	mov	[r8 + RECT.top], 0
 	mov	[r8 + RECT.right], 600
-	mov	[r8 + RECT.bottom], 600
+	mov	[r8 + RECT.bottom], 150
 
 	call	g2d_copyToScreen
 
+
 .exit:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_G2D_FLUSH
+	popf
 	ret
 
 
@@ -69,6 +79,13 @@ g2d_flush:
 ; GUI can still run regadless of outcome and with current design it neeed screen refresh timer.
 
 g2d_init_screen:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_G2D_INIT_SCREEN
+
+
+
 	movzx	esi, byte [qword vidModes_sel + rmData]
 	cmp	esi, 0xff
 	jz	.err
@@ -87,6 +104,7 @@ g2d_init_screen:
 	shr	ecx, 3
 	mov	edi, [qword vbeLfb_ptr + rmData]
 	mov	r10, rdi
+	mov	rax, -1
 	cld
 	rep	stosq
 	and	ebp, 7
@@ -128,13 +146,13 @@ g2d_init_screen:
 
 	mov	rcx, r8
 
-	; alloc mem for the DoubleBuffer (in 4KB chunks unfortunately, and not 2MB)
+	; alloc mem for the DoubleBuffer
 	imul	edi, eax
 	add	edi, 0x1fffff
 	and	edi, not 0x1fffff
 	shr	edi, 14
 	mov	r9d, edi
-	mov	rax, 0xc00000/16384
+	mov	rax, 0x5c00000/16384
 	mov	r8, rax
 	shl	rax, 14
 	mov	r12d, PG_P + PG_RW + PG_ALLOC
@@ -145,7 +163,16 @@ g2d_init_screen:
 	mov	word [qword txtVidCursor + rmData], 10
 
 	clc
-@@:	ret
+@@:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_G2D_INIT_SCREEN
+	popf
+
+	ret
+
 .err:	stc
 	jmp	@b
 

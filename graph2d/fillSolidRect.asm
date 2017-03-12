@@ -16,6 +16,12 @@
 g2d_fillRect:
 	sub	rsp, 32
 
+	lea	rax, [rip]
+	shr	rax, 39
+	shl	rax, 39
+	bts	qword [rax + 8192 + functions], FN_G2D_FILLRECT
+
+
 	movsx	eax, word [r8]			; x1				EAX
 	movsx	esi, word [r8 + 4]		; width 			ESI
 	mov	ecx, [r9 + DRAWBUFF.clip.left]
@@ -345,8 +351,12 @@ g2d_fillRect:
 
 	align 8
 .exit:
+	lea	rax, [rip]
+	shr	rax, 39
+	shl	rax, 39
+	btr	qword [rax + 8192 + functions], FN_G2D_FILLRECT
+
 	add	rsp, 32
-	rep
 	ret
 
 ;===================================================================================================

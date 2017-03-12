@@ -17,6 +17,11 @@
 	align 4
 thread_fromFile:
 	push	rax rcx rsi rdi rbp
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_THREAD_FROM_FILE
+
 	sub	rsp, .vars
 
 .vars		= 48
@@ -34,7 +39,6 @@ thread_fromFile:
 	jc	.err
 	mov	[rsp + 12], r8d
 	mov	qword [rsp + 16], PG_USER
-	reg	r8, 26a
 
 			  ; currently, skipping uninitialized data section
 
@@ -169,13 +173,21 @@ thread_fromFile:
 	; let schedule know that there is another thread to run
 	mov	r8d, [rsp + 12]
 	mov	r9, [rsp + 24]
-	mov	r12d, 65500
+	mov	r12d, 65000
 	xor	r13, r13
 	call	thread_addEntry
 	jc	.err
 	; CF=0
 
-.exit:	mov	rbp, [rsp + .vars]
+.exit:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_THREAD_FROM_FILE
+	popf
+
+	mov	rbp, [rsp + .vars]
 	mov	rdi, [rsp + .vars+8]
 	mov	rsi, [rsp + .vars+16]
 	mov	rcx, [rsp + .vars+24]
@@ -186,6 +198,7 @@ thread_fromFile:
 	stc
 	jmp	.exit
 
+
 ;===================================================================================================
 ;   thread_createSys
 ;===================================================================================================
@@ -193,6 +206,10 @@ thread_fromFile:
 
 	align 4
 thread_createSys:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_THREAD_CREATE_SYS
 
 	; ---- to be deleted ---------------------------------------
 	mov	dword [qword 160*24+txtVidMem], 0x0e300e30
@@ -223,7 +240,6 @@ thread_createSys:
 
 	call	thread_allocID					; each sys thread (on different CPU)
 	jc	k64err						;    has unique id across entire OS
-	;reg	 r8, 104a
 
 	mov	edi, r8d
 	mov	esi, threads
@@ -234,10 +250,10 @@ thread_createSys:
 	mov	word [lapicT_pri0], di
 	mov	word [lapicT_currTID], di
 	mov    qword [rsi + r8 + THREAD.pml4], rbp
-	;reg rbp, 101f
+
 	mov	word [rsi + r8 + THREAD.next], di
 	mov	word [rsi + r8 + THREAD.prev], di
-	mov	word [rsi + r8 + THREAD.time2run], 65530	; timeslice in microseconds
+	mov	word [rsi + r8 + THREAD.time2run], 65000	; timeslice in microseconds
 	mov	word [rsi + r8 + THREAD.flags], 0		; bits[1:0] = priority list id
 	mov	     [rsi + r8 + THREAD.return_RIP], 0
 	mov	[lapicT_sysTID], di
@@ -277,6 +293,25 @@ thread_createSys:
 	xor	ecx, ecx
 	not	rcx
 	mov	[rax + TIMER.data2], rcx
+	;-------------------------------------------------------------------------------------------
+
+	mov	eax, [lapicT_ms]
+	reg2	rax, 0x80a
+	imul	eax, 30
+	mov	[redrawTime], rax		; number of miliseconds betw drawing frames
+	mov	qword [redrawFrame], 0		; when most recent draw frame was meant to happen
+
+	reg2	rax, 0x80a
+	mov	eax, [lapicT_ms]
+	imul	eax, 25
+	reg2	rax, 0x80a
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_THREAD_CREATE_SYS
+	popf
 
 	ret
 
@@ -317,6 +352,11 @@ thread_sleep:
 	jmp	timer_in
 
 .no_timeout:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_THREAD_SLEEP
+
 	; no thread swithes after this, (lapicT can fire but won't switch thread or fire timer handler)
 	call	noThreadSw				;			    for current thread
 
@@ -338,6 +378,11 @@ thread_sleep:
 	and	dword [lapicT_flags], not 4		; disable request to stop thread switch
 	mov	rax, cr0				; serializing instr. (AND executed before OR)
 	or	dword [lapicT_flags], 1 shl 3		; skip EOI
+
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_THREAD_SLEEP
 	int	LAPICT_vector				; fire lapicT handler that needs to reenable ints
 
 	; code execution ends here
@@ -348,7 +393,15 @@ thread_sleep:
 
 .ok:	clc
 @@:	call	resumeThreadSw
-.exit:	pop	rax rcx rsi rdi
+.exit:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_THREAD_SLEEP
+	popf
+
+	pop	rax rcx rsi rdi
 	ret
 
 .err:	stc
@@ -427,8 +480,6 @@ thread_addEntry:
 	movzx	r13, r13b
 
 	call	noThreadSw
-
-	;reg	 r8, 40b
 							; offs	idx
 	movzx	eax, word [lapicT_pri0 + r13*2] 	; eax / ebp	first entry id
 	mov	edi, r8d				; r8d / edi	new entry id
@@ -512,7 +563,6 @@ thread_allocID:
 	add	r8d, ecx
 	clc
 	sfence
-;reg r8, 24e
 .exit:
 	mov	dword [rbp], 0
 	call	resumeThreadSw

@@ -140,6 +140,10 @@ mem_setFlags:
 	align 8
 alloc_linAddr:
 	push	rax rcx rdi rsi rbp rbx
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_ALLOC_LIN_ADDR
 
 	bsr	rax, r8
 	cmp	r9, 0x10000
@@ -231,7 +235,7 @@ alloc_linAddr:
 .PDes_verified:
 	sub	r13, 1
 	cmp	r13, r12
-	jnz	k64err
+	jnz	k64err.allocLinA_bug2
 
 .alloc_ram:
 	lea	eax, [r8 + rbp]
@@ -298,7 +302,7 @@ alloc_linAddr:
 
 .PTs_mapped:
 	cmp	rsp, rcx
-	jnz	k64err
+	jnz	k64err.allocLinA_bug1
 
 	; allocate PT entries (PTes)
 	; PG_ALLOC flag must be set for so that #PF can map physical RAM
@@ -328,7 +332,15 @@ alloc_linAddr:
 
 .ok:
 	clc
-.exit:	pop	rbx rbp rsi rdi rcx rax
+.exit:
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_ALLOC_LIN_ADDR
+	popf
+
+	pop	rbx rbp rsi rdi rcx rax
 	ret
 .err:	stc
 	jmp	.exit
@@ -380,6 +392,11 @@ alloc_linAddr:
 	align 8
 alloc4kb_ram:
 	push	rax rcx rsi rdi rbx rbp rdx
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_ALLOC_4KB_RAM
+
 .stack=64
 	mov	rdi, [rsp + .stack+8]		; RDI
 .alloc:
@@ -406,7 +423,7 @@ alloc4kb_ram:
 
 	call	refill_pagingRam    ; nested threadSwitch	     ; in case no host page
 	test	dword [rsi*8], 1
-	jz	k64err
+	jz	k64err.alloc4kb_ram1
 @@:
 	mov	eax, [rcx]			; size
 	xor	r8, r8				; =0 if dirty chunks
@@ -421,7 +438,7 @@ alloc4kb_ram:
 	sub	eax, ebp
 	jnc	@f
 	add	ebp, eax
-	jz	k64err
+	jz	k64err.alloc4kb_ram2
 	xor	eax, eax
 @@:
 
@@ -431,7 +448,7 @@ alloc4kb_ram:
 	shl	r8, 63
 	mov	[rcx],	 eax			; eax = # of chunks left in the host page
 	sub	[rsp + .stack], ebp		; ebp = # of chunks allocated during this loop
-	jc	k64err
+	jc	k64err.alloc4kb_ram3
 
 	lea	rcx, [rcx + rsi*4]		; where from we read 4b indexes
 
@@ -476,6 +493,14 @@ alloc4kb_ram:
 .exit:
 	call	resumeThreadSw
 	clc
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_ALLOC_4KB_RAM
+	popf
+
 	pop	rdx rbp rbx rdi rsi rcx rax
 	ret
 
@@ -501,6 +526,10 @@ alloc4kb_ram:
 	align 8
 refill_pagingRam:
 	push	rax rdi rcx rsi rbp
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_REFILL_PAGING_RAM
 
 	; try taking one host 4KB page away from #PF first
 .local_alloc:
@@ -529,11 +558,11 @@ refill_pagingRam:
 	shr	r8, 16
 
 	add	ecx, r9d
-	jc	k64err
+	jc	k64err.refill_pagingRam5
 	cmp	ecx, 0x3fc
-	ja	k64err
+	ja	k64err.refill_pagingRam6
 	sub	di, cx
-	jc	k64err
+	jc	k64err.refill_pagingRam3
 
 	shl	rdi, 48
 	bts	r8, rbp
@@ -595,12 +624,12 @@ refill_pagingRam:
 	mov	r9d, [rsi + 4]		; zeroed/dirty
 	mov	r12, [rsi + 8]		; ptr to next 4kb
 	cmp	ecx, 0x3fc
-	ja	k64err
+	ja	k64err.refill_pagingRam2
 
 	; update info and release the lock
 	mov	[rdi], r12
 	sub	[rdi + 8], ecx
-	jc	k64err
+	jc	k64err.refill_pagingRam4
 	sfence
 	btr	dword [rdi + 12], 0
 	jmp	.exit
@@ -610,7 +639,7 @@ refill_pagingRam:
 .mem_alloc:
 	; - try 4kb that is currently in use by #PF
 	; - ask other CPUs
-	jmp	k64err
+	jmp	k64err.refill_pagingRam_noRAM
 
 ;---------------------------------------------------------------------------------------------------
 	align 4
@@ -619,12 +648,20 @@ refill_pagingRam:
 	shl	r8, 12
 
 	call	resumeThreadSw
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_REFILL_PAGING_RAM
+	popf
+
 	pop	rbp rsi rcx rdi rax
 	ret
 
 .noGlobRam:
 	cmp	dword [rdi + 8], 0
-	jnz	k64err
+	jnz	k64err.refill_pagingRam1
 	btr	dword [rdi + 12], 0
 	jmp	.mem_alloc
 
@@ -636,6 +673,11 @@ refill_pagingRam:
 	align 8
 update_PF_ram:
 	push	rax rcx rsi rdi
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_UPDATE_PF_RAM
+
 	call	noThreadSw		    ; TODO: quene made of functions
 
 	; TODO: we need to unmap old pages first (PF handler does set bits but doesn't unmap)
@@ -671,12 +713,12 @@ update_PF_ram:
 	mov	r9d, [rsi + 4]		; zeroed/dirty
 	mov	r12, [rsi + 8]		; ptr to next 4kb
 	cmp	ecx, 0x3fc
-	ja	k64err
+	ja	k64err.update_PF_ram1
 
 	; release the lock
 	mov	[rdi], r12
 	sub	[rdi + 8], ecx
-	jc	k64err
+	jc	k64err.update_PF_ram2
 	sfence
 	mov	rax, [PF_pages] 	; earlier set bit will remain set, other info updated
 	btr	dword [rdi + 12], 0
@@ -685,11 +727,11 @@ update_PF_ram:
 @@:	mov	esi, eax
 	mov	rdi, rax
 	btr	esi, r14d
-	jnc	k64err
+	jnc	k64err.update_PF_ram3
 	shr	rdi, 48
 	movzx	r9d, r9w
 	add	di, cx
-	jc	k64err
+	jc	k64err.update_PF_ram4
 	shl	rdi, 48
 	shl	r9, 32
 	or	rdi, rsi
@@ -700,6 +742,14 @@ update_PF_ram:
 	clc
 .exit:
 	call	resumeThreadSw
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_UPDATE_PF_RAM
+	popf
+
 	pop	rdi rsi rcx rax
 	ret
 
@@ -718,6 +768,10 @@ update_PF_ram:
 
 	align 8
 fragmentRAM:
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_FRAGMENT_RAM
 
 .sz=16
 	; alloc host 16KB where we save indexes of the remaining 16KB chunks
@@ -842,6 +896,14 @@ fragmentRAM:
 
 	clc
 .exit:
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_FRAGMENT_RAM
+	popf
+
 	ret
 
 .completed:
@@ -863,6 +925,11 @@ fragmentRAM:
 	align 8
 mapToKnownPT:
 	push	r12 rbx rcx rax r9
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_MAPTOKNOWNPT
+
 	cmp	r12, 0x200000
 	jg	k64err
 
@@ -894,6 +961,13 @@ mapToKnownPT:
 	pop	r8
 	add	r8, rbx
 
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_MAPTOKNOWNPT
+	popf
+
 	pop	r9 rax rcx rbx r12
 	ret
 
@@ -905,6 +979,11 @@ mapToKnownPT:
 mem4kb_zero:
 	push	rdi rax rcx
 
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	bts	qword [r14 + 8192 + functions], FN_MEM4KB_ZERO
+
 	;whenever mem is tested or not is determined by global policy
 	;call	 mem4kb_test
 
@@ -913,6 +992,14 @@ mem4kb_zero:
 	mov	ecx, 4096/8
 	xor	eax, eax
 	rep	stosq			; stosQ is faster than SSE loop
+
+	pushf
+	lea	r14, [rip]
+	shr	r14, 39
+	shl	r14, 39
+	btr	qword [r14 + 8192 + functions], FN_MEM4KB_ZERO
+	popf
+
 	pop	rcx rax rdi
 ret
 

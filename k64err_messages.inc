@@ -49,7 +49,30 @@ k64err_messages:
 	dw .45-._
 	dw .46-._
 	dw .47-._
-
+	dw .48-._
+	dw .49-._
+	dw .50-._
+	dw .51-._
+	dw .52-._
+	dw .53-._
+	dw .54-._
+	dw .55-._
+	dw .56-._
+	dw .57-._
+	dw .58-._
+	dw .59-._
+	dw .60-._
+	dw .61-._
+	dw .62-._
+	dw .63-._
+	dw .64-._
+	dw .65-._
+	dw .66-._
+	dw .67-._
+	dw .68-._
+	dw .69-._
+	dw .70-._
+	dw .71-._
 ._:
 
 .0  db "#pf: 2nd pf",0			; #PF happend while executing PF handler
@@ -77,7 +100,7 @@ k64err_messages:
 .22 db "thrd_sleep_executeAfterINT20",0
 .23 db "timer_in min 10us",0
 .24 db "timer_in max 1sec",0
-.25 db "lapicT: threads doesnt sleep",0
+.25 db "lapict: threads doesnt sleep",0
 .26 db "dev_find: wrong input",0
 .27 db "rtc: init1",0
 .28 db "rtc: init2",0
@@ -100,6 +123,30 @@ k64err_messages:
 .45 db "int_install: not masked",0
 .46 db "int_install: non shared handler present",0
 .47 db "max thread",0
+.48 db "allocLinA_bug1",0
+.49 db "allocLinA_bug2",0
+.50 db "alloc4kb_ram1",0
+.51 db "alloc4kb_ram2",0
+.52 db "alloc4kb_ram3",0
+.53 db "refill_pagingRam: no ram",0
+.54 db "refill_pagingRam1",0
+.55 db "refill_pagingRam2",0
+.56 db "refill_pagingRam3",0
+.57 db "refill_pagingRam4",0
+.58 db "update_pf_ram1",0
+.59 db "update_pf_ram2",0
+.60 db "update_pf_ram3",0
+.61 db "update_pf_ram4",0
+.62 db "refill_paging_ram5",0
+.63 db "refill_paging_ram6",0
+.64 db "frag_ram: not enough ram",0
+.65 db "pf1",0
+.66 db "pf2",0
+.67 db "pf3",0
+.68 db "pf4",0
+.69 db "lapict: large init",0
+.70 db "timer_in: insert thread",0
+.71 db "alloc lin addr",0
 
 k64err_messages_len = $-k64err_messages
 
